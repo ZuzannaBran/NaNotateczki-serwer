@@ -44,6 +44,21 @@ zachowanie źródłowej notatki i usuwa konto testowe.
 Nie uruchamiaj go na produkcyjnej bazie. Jeżeli smoke test przerwie się
 przed `finally`, sprawdź usunięcie konta i plików testowych.
 
+## Synchronizacja ustawień konta
+
+Po migracji `0007_account_settings.sql` uruchom:
+
+```bash
+python -m pytest -q api/tests/test_account_settings.py api/tests/test_backup_validation.py
+```
+
+Ręcznie sprawdź: urządzenie A zapisuje Recent i 900 s bezczynności,
+urządzenie B pobiera je po logowaniu, następnie zmienia ustawienia,
+a urządzenie A otrzymuje je przy uzgodnieniu stanu. W przypadku
+równoczesnych zmian tej samej kategorii potwierdź HTTP 409 i zachowanie
+nieprzesłanych ustawień. Przypadki te nie są potwierdzone testem
+na prawdziwym PostgreSQL.
+
 ## Flutter
 
 W repozytorium `NaNotateczki`, gałąź `dev`:
