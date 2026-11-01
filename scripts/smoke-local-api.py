@@ -93,7 +93,14 @@ def main() -> None:
             "folder": "",
             "createdAt": "2026-11-01T00:00:00.000Z",
             "updatedAt": "2026-11-01T00:00:00.000Z",
-            "pages": [],
+            "pages": [{
+                "id": "page-1",
+                "title": "Page",
+                "isBookmarked": False,
+                "inkStrokes": [],
+                "textBlocks": [{"id": "text-1", "text": "original"}],
+                "imageBlocks": [],
+            }],
         }
         status, saved = call(
             "PUT",
