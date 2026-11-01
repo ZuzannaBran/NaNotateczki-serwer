@@ -15,7 +15,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    username: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     auth_version: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=1, server_default="1"

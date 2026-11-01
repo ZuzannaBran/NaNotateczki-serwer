@@ -40,14 +40,14 @@ def expect(status: int, expected: int, label: str) -> None:
 
 
 def main() -> None:
-    email = f"smoke-{uuid.uuid4().hex}@example.com"
+    username = f"smoke_{uuid.uuid4().hex[:25]}"
     password = "Test1234"
     new_password = "Next1234"
     user_id = None
     backup_id = None
     try:
         status, registered = call(
-            "POST", "/v1/auth/register", {"email": email, "password": password}
+            "POST", "/v1/auth/register", {"username": username, "password": password}
         )
         if status != 201:
             raise AssertionError(f"register: HTTP {status}, {registered}")
@@ -152,7 +152,7 @@ def main() -> None:
                     {"refreshToken": refresh_token})[0], 401,
                "old refresh token")
         expect(call("POST", "/v1/auth/login",
-                    {"email": email, "password": new_password})[0], 200,
+                    {"username": username, "password": new_password})[0], 200,
                "login with new password")
         print(
             "HTTP smoke OK: account, sync, backup, password change, "

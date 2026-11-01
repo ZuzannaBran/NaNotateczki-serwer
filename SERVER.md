@@ -1,8 +1,7 @@
 # NaNotateczki backend
 
 Backend działa z `api/` w katalogu głównym serwera. Jego kopia źródłowa jest
-w `code/NaNotateczki/server/`. API udostępnia konta z adresem
-e-mail jako loginem, hasła Argon2id, krótkie tokeny dostępu, rotowane tokeny
+w `code/NaNotateczki/server/`. API udostępnia konta z nazwą użytkownika jako loginem, hasła Argon2id, krótkie tokeny dostępu, rotowane tokeny
 odświeżania, synchronizację notatników z rewizjami i dziennikiem zmian, sygnały
 WebSocket oraz zweryfikowane snapshoty urządzeń.
 
@@ -44,11 +43,12 @@ wariant włącza rejestrację tylko dla API dostępnego przez port loopback.
    Caddy. PostgreSQL i API nie mają portów hosta; Caddy wiąże tylko
    `127.0.0.1:8080`. Publiczne HTTPS wymaga tunelu lub równoważnego proxy.
 5. Utwórz konto poleceniem
-   `docker compose exec api python -m app.create_user user@example.com`.
+   `docker compose exec api python -m app.create_user example_user`.
    Polecenie poprosi o hasło. Publiczna rejestracja pozostaje wyłączona.
 
 Przed uruchomieniem nowej wersji API wykonaj wszystkie migracje, w tym
-`0002_auth_version.sql`. Rejestracja i nowe hasło przy zmianie wymagają 8–128
+`0002_auth_version.sql` oraz `0003_username.sql`. Migracja nadaje istniejącym
+kontom login z unikalnej części e-maila lub identyfikatora konta. Rejestracja i nowe hasło przy zmianie wymagają 8–128
 znaków; logowanie nadal akceptuje istniejące hasła 1–256 znaków. Endpoint
 `POST /v1/auth/change-password` wymaga tokenu Bearer oraz JSON z
 `currentPassword` i `newPassword`. Sukces
@@ -69,8 +69,7 @@ zachowując nagłówek Host. Aplikację Web buduj z
 ## Backup
 
 Po zalogowaniu klient może uruchomić `RemoteBackupScheduler`. Wysyła
-zweryfikowany snapshot po zmianach, ponawia błędy i normalnie zapisuje co 30
-minut. Pliki są prywatne w `data/backups/<user-id>/`; serwer potwierdza rozmiar,
+zweryfikowany snapshot po zmianach, ponawia błędy i normalnie zapisuje po ustawionym czasie bezczynności. Pliki są prywatne w `data/backups/<user-id>/`; serwer potwierdza rozmiar,
 SHA-256 i strukturę przed oznaczeniem ich jako poprawnych.
 
 Pełna kopia serwera wymaga osobnego fizycznego nośnika. Uruchamiaj regularnie

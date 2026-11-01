@@ -1,12 +1,17 @@
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Credentials(BaseModel):
-    email: EmailStr
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[a-z0-9_]+$")
     password: str = Field(min_length=1, max_length=256)
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_username(cls, value: Any) -> Any:
+        return value.strip().lower() if isinstance(value, str) else value
 
 
 class RegistrationCredentials(Credentials):

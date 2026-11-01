@@ -49,3 +49,11 @@ def test_migrations_are_recorded_and_modified_history_is_rejected() -> None:
     assert "Applied migration was modified" in script
     assert "BEGIN;" in script and "COMMIT;" in script
     assert "REVOKE ALL ON TABLE schema_migrations FROM nano_app" in script
+
+
+def test_username_migration_preserves_legacy_accounts() -> None:
+    migration = (ROOT / "migrations" / "0003_username.sql").read_text()
+    assert "ALTER TABLE users ADD COLUMN username" in migration
+    assert "split_part(email, '@', 1)" in migration
+    assert "CREATE UNIQUE INDEX users_username_unique" in migration
+    assert "DROP COLUMN email" in migration

@@ -39,14 +39,14 @@ def session_response(user: User, refresh_token: str) -> dict:
         "refreshToken": refresh_token,
         "expiresIn": expires_in,
         "userId": str(user.id),
-        "email": user.email,
+        "username": user.username,
     }
 
 
-async def limit_auth(request: Request, email: str) -> None:
+async def limit_auth(request: Request, username: str) -> None:
     client = request.client.host if request.client else "unknown"
     await auth_limiter.check(f"ip:{client}")
-    await auth_limiter.check(f"account:{email.lower()}")
+    await auth_limiter.check(f"account:{username.lower()}")
 
 
 @router.post("/register", status_code=201)
@@ -58,11 +58,11 @@ async def register(
     settings = get_settings()
     if not settings.allow_registration:
         raise HTTPException(status_code=403, detail="Registration is disabled.")
-    email = credentials.email.lower()
-    await limit_auth(request, email)
+    username = credentials.username.lower()
+    await limit_auth(request, username)
     user = User(
         id=uuid.uuid4(),
-        email=email,
+        username=username,
         password_hash=hash_password(credentials.password),
         auth_version=1,
     )
@@ -83,10 +83,10 @@ async def login(
     request: Request,
     session: AsyncSession = Depends(database_session),
 ) -> dict:
-    email = credentials.email.lower()
-    await limit_auth(request, email)
+    username = credentials.username.lower()
+    await limit_auth(request, username)
     result = await session.execute(
-        select(User).where(User.email == email).with_for_update()
+        select(User).where(User.username == username).with_for_update()
     )
     user = result.scalar_one_or_none()
     encoded_hash = user.password_hash if user is not None else dummy_password_hash
@@ -164,4 +164,4 @@ async def change_password(
 
 @router.get("/me")
 async def me(user: User = Depends(current_user)) -> dict:
-    return {"userId": str(user.id), "email": user.email}
+    return {"userId": str(user.id), "username": user.username}

@@ -32,10 +32,10 @@ def test_password_is_argon2_and_plaintext_is_not_stored() -> None:
 
 
 def test_password_lengths_match_the_flutter_account_client() -> None:
-    email = "user@example.com"
-    assert Credentials(email=email, password="x").password == "x"
+    username = "test_user"
+    assert Credentials(username=username, password="x").password == "x"
     assert (
-        RegistrationCredentials(email=email, password="12345678").password
+        RegistrationCredentials(username=username, password="12345678").password
         == "12345678"
     )
     assert (
@@ -46,9 +46,14 @@ def test_password_lengths_match_the_flutter_account_client() -> None:
     )
 
     with pytest.raises(ValidationError):
-        RegistrationCredentials(email=email, password="1234567")
+        Credentials(username="!", password="valid")
     with pytest.raises(ValidationError):
-        RegistrationCredentials(email=email, password="x" * 129)
+        Credentials(username="ab", password="valid")
+    assert Credentials(username="  TEST_USER  ", password="valid").username == "test_user"
+    with pytest.raises(ValidationError):
+        RegistrationCredentials(username=username, password="1234567")
+    with pytest.raises(ValidationError):
+        RegistrationCredentials(username=username, password="x" * 129)
     with pytest.raises(ValidationError):
         PasswordChangeRequest(currentPassword="old", newPassword="1234567")
     with pytest.raises(ValidationError):
@@ -73,7 +78,7 @@ def test_registration_flushes_user_before_creating_refresh_session(
         async def commit(self) -> None:
             assert self.refresh_added
 
-    async def skip_rate_limit(request: object, email: str) -> None:
+    async def skip_rate_limit(request: object, username: str) -> None:
         pass
 
     monkeypatch.setattr(auth, "limit_auth", skip_rate_limit)
@@ -84,13 +89,13 @@ def test_registration_flushes_user_before_creating_refresh_session(
     result = asyncio.run(
         auth.register(
             auth.RegistrationCredentials(
-                email="user@example.com", password="12345678"
+                username="test_user", password="12345678"
             ),
             None,
             session,
         )
     )
-    assert result["email"] == "user@example.com"
+    assert result["username"] == "test_user"
 
 
 def test_access_token_is_bound_to_user_and_type() -> None:
@@ -107,7 +112,7 @@ def test_access_token_is_bound_to_user_and_type() -> None:
 def test_old_access_token_is_rejected_after_password_version_changes() -> None:
     user = User(
         id=uuid.uuid4(),
-        email="user@example.com",
+        username="test_user",
         password_hash=hash_password("correct horse battery staple"),
         auth_version=1,
     )
@@ -131,7 +136,7 @@ def test_old_access_token_is_rejected_after_password_version_changes() -> None:
 def test_password_change_rehashes_and_revokes_refresh_sessions() -> None:
     user = User(
         id=uuid.uuid4(),
-        email="user@example.com",
+        username="test_user",
         password_hash=hash_password("correct horse battery staple"),
         auth_version=1,
     )
@@ -169,7 +174,7 @@ def test_wrong_current_password_does_not_change_credentials() -> None:
     original_hash = hash_password("correct horse battery staple")
     user = User(
         id=uuid.uuid4(),
-        email="user@example.com",
+        username="test_user",
         password_hash=original_hash,
         auth_version=1,
     )
@@ -203,7 +208,7 @@ def test_same_password_is_rejected_without_revoking_sessions() -> None:
     original_hash = hash_password("correct horse battery staple")
     user = User(
         id=uuid.uuid4(),
-        email="user@example.com",
+        username="test_user",
         password_hash=original_hash,
         auth_version=1,
     )
@@ -236,7 +241,7 @@ def test_same_password_is_rejected_without_revoking_sessions() -> None:
 def test_old_refresh_after_password_change_cannot_revoke_new_sessions() -> None:
     user = User(
         id=uuid.uuid4(),
-        email="user@example.com",
+        username="test_user",
         password_hash=hash_password("a different long password"),
         auth_version=2,
     )
