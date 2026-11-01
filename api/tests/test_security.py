@@ -282,3 +282,18 @@ def test_refresh_token_digest_is_one_way_and_deterministic() -> None:
     assert token_digest(token) == token_digest(token)
     assert token not in token_digest(token)
     assert len(token_digest(token)) == 64
+
+
+def test_rate_limiter_caps_identity_keys_without_evicting_active_limits() -> None:
+    from app.rate_limit import InMemoryRateLimiter
+
+    limiter = InMemoryRateLimiter(attempts=2, window_seconds=300, max_keys=2)
+    asyncio.run(limiter.check("ip:first"))
+    asyncio.run(limiter.check("ip:second"))
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(limiter.check("ip:third"))
+    assert error.value.status_code == 429
+    asyncio.run(limiter.check("ip:first"))
+    with pytest.raises(HTTPException):
+        asyncio.run(limiter.check("ip:first"))
+    assert len(limiter._entries) == 2

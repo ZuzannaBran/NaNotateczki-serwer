@@ -80,6 +80,22 @@ i sprawdź `curl -i -H 'Host: api.nanotateczki.pl' http://127.0.0.1:8080/health`
 Port `18080` istnieje wyłącznie w nakładce `compose.local.yaml`, a nie
 w publicznym wdrożeniu.
 
+## Bezpieczeństwo po aktualizacji
+
+Caddy ufa nagłówkowi \`CF-Connecting-IP\` tylko od prywatnego proxy
+(zgodnie z \`trusted_proxies\`), weryfikuje listę pośredników od prawej
+strony i nadpisuje \`X-Forwarded-For\` przed przekazaniem do API. Używaj
+wyłącznie Cloudflare Tunnel; nie otwieraj portu Caddy na internet.
+Nowy Content-Security-Policy ogranicza źródła skryptów i połączeń;
+sprawdź działanie edytora Web i importu PDF po wdrożeniu.
+
+Limiter logowania ma teraz twardy limit kluczy w pamięci. Walidacja
+backupów i synchronizacji odrzuca błędne struktury notatników, duplikaty
+stron i niepoprawnie zakodowane obrazy. Te zabezpieczenia **nie**
+zapewniają szyfrowania end-to-end ani szyfrowania danych w spoczynku.
+Do ochrony dysku serwera nadal konieczne jest szyfrowanie nośnika i
+bezpieczne zarządzanie kluczami.
+
 ## Backup
 
 Po zalogowaniu klient może uruchomić `RemoteBackupScheduler`. Wysyła

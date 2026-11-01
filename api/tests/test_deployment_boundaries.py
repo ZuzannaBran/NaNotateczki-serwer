@@ -66,3 +66,17 @@ def test_username_migration_preserves_legacy_accounts() -> None:
     assert "split_part(email, '@', 1)" in migration
     assert "CREATE UNIQUE INDEX users_username_unique" in migration
     assert "DROP COLUMN email" in migration
+
+
+def test_proxy_uses_strict_client_ip_handling_and_limits_script_origins() -> None:
+    caddy = (ROOT / "Caddyfile").read_text()
+    assert "trusted_proxies_strict" in caddy
+    assert "client_ip_headers CF-Connecting-IP" in caddy
+    assert "header_up X-Forwarded-For {client_ip}" in caddy
+    assert "script-src 'self' https://cdn.jsdelivr.net" in caddy
+
+
+def test_backend_limiter_does_not_grow_without_a_bound() -> None:
+    limiter = (ROOT / "api/app/rate_limit.py").read_text()
+    assert "max_keys: int = 4096" in limiter
+    assert "if len(self._entries) >= self.max_keys" in limiter

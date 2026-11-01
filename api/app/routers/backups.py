@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import database_session
 from ..models import Device, DeviceBackup, User
-from ..schemas import BackupCreate
+from ..schemas import BackupCreate, validate_notebook_payload
 from ..security import current_user
 from ..settings import get_settings
 
@@ -182,6 +182,15 @@ def validate_envelope(envelope: object, backup: DeviceBackup) -> None:
         or not isinstance(payload.get("studyPlannerState"), dict)
     ):
         raise ValueError("incomplete backup payload")
+    seen_uids: set[str] = set()
+    for notebook in payload["notebooks"]:
+        if not isinstance(notebook, dict):
+            raise ValueError("invalid notebook")
+        validate_notebook_payload(notebook)
+        uid = notebook["uid"]
+        if uid in seen_uids:
+            raise ValueError("duplicate notebook UID")
+        seen_uids.add(uid)
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     if hashlib.sha256(encoded).hexdigest() != envelope.get("checksum"):
         raise ValueError("payload checksum mismatch")

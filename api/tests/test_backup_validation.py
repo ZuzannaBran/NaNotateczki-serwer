@@ -82,3 +82,36 @@ def test_rejects_non_object_and_incomplete_backup_payload() -> None:
     }
     with pytest.raises(ValueError):
         validate_envelope(envelope, record)
+
+
+def test_rejects_malformed_or_duplicate_notebooks_in_verified_backup() -> None:
+    record = backup_record(uuid.uuid4())
+    payload = {
+        "notebooks": [{"uid": "n1", "pages": "not-a-list"}],
+        "libraryState": {},
+        "studyPlannerState": {},
+    }
+    envelope = {
+        "format": "nanotateczki-server-backup",
+        "version": 2,
+        "deviceId": str(record.device_id),
+        "checksumAlgorithm": "sha256",
+        "payload": payload,
+    }
+    envelope["checksum"] = compact_sha256(payload)
+    with pytest.raises(ValueError):
+        validate_envelope(envelope, record)
+
+    notebook = {
+        "uid": "n1",
+        "title": "Notes",
+        "kind": 0,
+        "folder": "Notes",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-01-01T00:00:00Z",
+        "pages": [],
+    }
+    payload["notebooks"] = [notebook, dict(notebook)]
+    envelope["checksum"] = compact_sha256(payload)
+    with pytest.raises(ValueError, match="duplicate notebook UID"):
+        validate_envelope(envelope, record)

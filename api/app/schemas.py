@@ -1,3 +1,5 @@
+import base64
+import binascii
 from typing import Any, Literal
 from uuid import UUID
 
@@ -29,6 +31,52 @@ class PasswordChangeRequest(BaseModel):
     newPassword: str = Field(min_length=8, max_length=128)
 
 
+def validate_notebook_payload(value: dict[str, Any]) -> None:
+    required = {"uid", "title", "kind", "folder", "createdAt", "updatedAt", "pages"}
+    if not required.issubset(value):
+        raise ValueError("notebook payload is incomplete")
+    if (
+        not isinstance(value["uid"], str)
+        or not 1 <= len(value["uid"]) <= 128
+        or not isinstance(value["title"], str)
+        or not isinstance(value["folder"], str)
+        or type(value["kind"]) is not int
+        or not 0 <= value["kind"] <= 2
+        or not isinstance(value["createdAt"], str)
+        or not isinstance(value["updatedAt"], str)
+        or not isinstance(value["pages"], list)
+    ):
+        raise ValueError("notebook metadata is invalid")
+    page_ids: set[str] = set()
+    for page in value["pages"]:
+        if not isinstance(page, dict):
+            raise ValueError("notebook page is invalid")
+        page_id = page.get("id")
+        if not isinstance(page_id, str) or not page_id or page_id in page_ids:
+            raise ValueError("missing or duplicate page ID")
+        page_ids.add(page_id)
+        for key in ("textBlocks", "imageBlocks"):
+            items = page.get(key)
+            if not isinstance(items, list) or any(
+                not isinstance(item, dict) for item in items
+            ):
+                raise ValueError(f"invalid {key}")
+        strokes = page.get("inkStrokes", [])
+        if not isinstance(strokes, list) or any(
+            not isinstance(stroke, dict) for stroke in strokes
+        ):
+            raise ValueError("invalid inkStrokes")
+        for image in page["imageBlocks"]:
+            encoded = image.get("bytes")
+            if encoded is not None:
+                if not isinstance(encoded, str) or not encoded:
+                    raise ValueError("invalid image bytes")
+                try:
+                    base64.b64decode(encoded, validate=True)
+                except (binascii.Error, ValueError) as error:
+                    raise ValueError("invalid image base64") from error
+
+
 class SyncWrite(BaseModel):
     expectedRevision: int = Field(ge=0)
     notebook: dict[str, Any]
@@ -36,9 +84,7 @@ class SyncWrite(BaseModel):
     @field_validator("notebook")
     @classmethod
     def validate_notebook_shape(cls, value: dict[str, Any]) -> dict[str, Any]:
-        required = {"uid", "title", "kind", "folder", "createdAt", "updatedAt", "pages"}
-        if not required.issubset(value) or not isinstance(value.get("pages"), list):
-            raise ValueError("notebook payload is incomplete")
+        validate_notebook_payload(value)
         return value
 
 
