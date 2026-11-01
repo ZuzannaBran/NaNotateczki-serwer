@@ -160,11 +160,16 @@ async def put_notebook(
         )
         session.add(record)
     else:
+        if active_share is not None and record.deleted_at is not None:
+            await conflict(record, uid)
         if active_share is not None and body.baseNotebook is not None:
-            from .study_shares import merge_share_document
+            from .study_shares import merge_share_document, require_verified_base
 
             if body.baseNotebook.get("uid") != uid:
                 raise HTTPException(status_code=409, detail="Invalid base notebook.")
+            await require_verified_base(
+                session, record, body.expectedRevision, body.baseNotebook
+            )
             clock = dict(active_share.edit_clock or {})
             merged_notebook = merge_share_document(
                 body.baseNotebook, body.notebook, record.content,
