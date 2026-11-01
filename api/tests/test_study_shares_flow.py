@@ -797,3 +797,71 @@ def test_cannot_open_two_active_shares_for_same_document(environment):
     assert second.status_code == 409, second.text
     assert len(db.shares) == 1
 
+
+
+def test_deleting_shared_notebook_revokes_guest_access(monkeypatch):
+    import asyncio
+    import copy
+    from types import SimpleNamespace
+
+    from starlette.requests import Request
+
+    from app.routers import sync
+    from app.schemas import DeleteWrite
+
+    original = copy.deepcopy(_editable_notebook())
+    note = SyncedNotebook(
+        id=uuid.uuid4(), owner_id=OWNER_ID, uid=NOTE_UID,
+        content=original, revision=1, deleted_at=None,
+    )
+    share = StudyShare(
+        id=uuid.uuid4(), owner_id=OWNER_ID, document_uid=NOTE_UID,
+        title="Shared", password_hash="unused",
+        revision=0, edit_clock={},
+        expires_at=datetime.now(UTC) + timedelta(hours=4),
+    )
+    notifications = []
+
+    class Session:
+        async def scalar(self, _query):
+            return share
+
+        async def execute(self, _query):
+            return SimpleNamespace(scalar_one_or_none=lambda: note)
+
+        async def get(self, _model, _key):
+            return None
+
+        def add(self, item):
+            if isinstance(item, ChangeEvent):
+                item.id = 17
+
+        async def flush(self):
+            pass
+
+        async def commit(self):
+            pass
+
+    async def no_lock(*_args):
+        pass
+
+    async def publish(key, message):
+        notifications.append((key, message))
+
+    monkeypatch.setattr(sync, "lock_owner_events", no_lock)
+    monkeypatch.setattr(sync, "hub", SimpleNamespace(publish=publish))
+    asyncio.run(sync.delete_notebook(
+        NOTE_UID,
+        DeleteWrite(expectedRevision=1),
+        Request({
+            "type": "http",
+            "headers": [(b"content-length", b"4096")],
+        }),
+        "delete-idempotency-12345",
+        User(id=OWNER_ID, username="owner", password_hash="unused"),
+        Session(),
+    ))
+    assert note.deleted_at is not None
+    assert share.revoked_at is not None
+    assert (share.id, {"type": "ended"}) in notifications
+
