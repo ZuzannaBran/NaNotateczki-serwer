@@ -34,6 +34,27 @@ def call(method: str, path: str, body=None, token: str | None = None,
         return response.status, json.loads(payload) if payload else {}
 
 
+
+def call_raw(method: str, path: str, body: bytes | None = None,
+             *, bearer: str | None = None,
+             mime: str | None = None) -> tuple[int, bytes]:
+    """Exchange raw PNG bodies and inspect guest ticket authorization."""
+    headers = {"X-Request-ID": str(uuid.uuid4())}
+    if bearer is not None:
+        headers["Authorization"] = f"Bearer {bearer}"
+    if mime is not None:
+        headers["Content-Type"] = mime
+    request = Request(
+        base_url + path, data=body, headers=headers, method=method,
+    )
+    try:
+        response = urlopen(request, timeout=10)
+    except HTTPError as error:
+        response = error
+    with response:
+        return response.status, response.read()
+
+
 def expect(status: int, expected: int, label: str) -> None:
     if status != expected:
         raise AssertionError(f"{label}: expected HTTP {expected}, got {status}")
@@ -88,6 +109,74 @@ def main() -> None:
         )
         expect(status, 200, "sync changes")
         assert changes["changes"][0]["uid"] == uid
+
+        # Real HTTP + PostgreSQL lifecycle for password-protected sharing.
+        status, missing_share = call(
+            "POST", "/v1/study-shares",
+            {"documentUid": "not-synced", "title": "Missing",
+             "password": "study-secret-123"},
+            token=token,
+        )
+        expect(status, 409, "reject sharing an unsynced document")
+
+        status, share = call(
+            "POST", "/v1/study-shares",
+            {"documentUid": uid, "title": "Live study test",
+             "password": "study-secret-123"},
+            token=token,
+        )
+        expect(status, 201, "create study share")
+        share_id = str(uuid.UUID(share["id"]))
+        share_path = f"/v1/study-shares/{share_id}"
+
+        expect(call(
+            "POST", share_path + "/join", {"password": "wrong-password"}
+        )[0], 401, "incorrect guest password")
+        status, guest = call(
+            "POST", share_path + "/join",
+            {"password": "study-secret-123"},
+        )
+        expect(status, 200, "guest joins without account")
+        ticket = guest["ticket"]
+        expect(call_raw("GET", share_path + "/frame")[0],
+               401, "frame without ticket")
+        expect(call_raw(
+            "GET", share_path + "/frame", bearer=ticket
+        )[0], 404, "frame before host upload")
+        expect(call(
+            "POST", share_path + "/extend", {}, token=token
+        )[0], 409, "extension too early")
+
+        # A complete, minimal 1x1 PNG instead of a synthetic header.
+        frame = __import__("base64").b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+            "AAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg=="
+        )
+        expect(call_raw(
+            "PUT", share_path + "/frame", frame,
+            bearer=token, mime="image/png",
+        )[0], 204, "host uploads PNG")
+        status, received = call_raw(
+            "GET", share_path + "/frame", bearer=ticket,
+        )
+        expect(status, 200, "guest reads PNG")
+        assert received == frame, "PNG changed during upload/download"
+
+        expect(call_raw(
+            "DELETE", share_path, b"", bearer=token,
+        )[0], 204, "owner ends study share")
+        expect(call_raw(
+            "GET", share_path + "/frame", bearer=ticket,
+        )[0], 410, "revoked guest can no longer read")
+        expect(call(
+            "POST", share_path + "/join",
+            {"password": "study-secret-123"},
+        )[0], 410, "ended session cannot be rejoined")
+        status, after_end = call("GET", "/v1/sync/bootstrap", token=token)
+        expect(status, 200, "owner notebook remains after sharing")
+        assert any(
+            entry.get("uid") == uid for entry in after_end["notebooks"]
+        ), "Ending sharing removed the owner's original notebook"
 
         device_id = str(uuid.uuid4())
         backup_payload = {
@@ -155,7 +244,7 @@ def main() -> None:
                     {"username": username, "password": new_password})[0], 200,
                "login with new password")
         print(
-            "HTTP smoke OK: account, sync, backup, password change, "
+            "HTTP smoke OK: account, sync, study share, backup, password change, "
             "token revocation"
         )
     finally:
