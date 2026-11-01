@@ -66,6 +66,20 @@ zachowując nagłówek Host. Aplikację Web buduj z
 `--dart-define=BACKEND_URL=https://api.BASE_DOMAIN` i umieść wynik w
 `web-dist/`. Origin API jest dokładnie `https://app.BASE_DOMAIN`.
 
+### Diagnostyka Caddy przy Cloudflare Tunnel
+
+Caddy działa na porcie 8080 bez publicznego przekierowania portów. Zachowuje
+`no-new-privileges` i `cap_drop: [ALL]`, ale przyznaje wyłącznie
+`NET_BIND_SERVICE` przez `cap_add`, ponieważ obraz Caddy ma uprawnienie
+pliku wykonywalnego wymagające tej zdolności. Bez wyjątku kontener może
+restartować się z komunikatem `exec /usr/bin/caddy: operation not permitted`.
+
+Po aktualizacji repozytorium uruchom
+`docker compose -f compose.yaml -f compose.public.yaml up -d caddy cloudflared`
+i sprawdź `curl -i -H 'Host: api.nanotateczki.pl' http://127.0.0.1:8080/health`.
+Port `18080` istnieje wyłącznie w nakładce `compose.local.yaml`, a nie
+w publicznym wdrożeniu.
+
 ## Backup
 
 Po zalogowaniu klient może uruchomić `RemoteBackupScheduler`. Wysyła

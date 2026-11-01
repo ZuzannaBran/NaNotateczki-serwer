@@ -14,6 +14,15 @@ def test_compose_does_not_publish_database_or_api_ports() -> None:
     assert "cap_drop: [ALL]" in compose
 
 
+def test_caddy_can_start_with_restricted_capabilities() -> None:
+    compose = (ROOT / "compose.yaml").read_text()
+    caddy = compose.split("\n  caddy:\n", 1)[1].split("\nvolumes:\n", 1)[0]
+
+    assert "cap_drop: [ALL]" in caddy
+    assert "cap_add: [NET_BIND_SERVICE]" in caddy
+    assert "security_opt: [no-new-privileges:true]" in caddy
+
+
 def test_schema_enforces_cross_owner_device_integrity() -> None:
     migration = (ROOT / "migrations" / "0001_initial.sql").read_text()
 
