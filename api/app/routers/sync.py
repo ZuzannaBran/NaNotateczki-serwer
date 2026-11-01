@@ -228,6 +228,14 @@ async def delete_notebook(
     previous = await idempotent_response(session, user.id, idempotency_key, request_hash)
     if previous is not None:
         return previous
+    active_share = await session.scalar(
+        select(StudyShare).where(
+            StudyShare.owner_id == user.id,
+            StudyShare.document_uid == uid,
+            StudyShare.revoked_at.is_(None),
+            StudyShare.expires_at > datetime.now(UTC),
+        ).limit(1).with_for_update()
+    )
     result = await session.execute(
         select(SyncedNotebook)
         .where(SyncedNotebook.owner_id == user.id, SyncedNotebook.uid == uid)
@@ -239,6 +247,8 @@ async def delete_notebook(
     record.revision += 1
     record.deleted_at = datetime.now(UTC)
     record.content = None
+    if active_share is not None:
+        active_share.revoked_at = record.deleted_at
     event = ChangeEvent(
         owner_id=user.id,
         entity_uid=uid,
@@ -259,4 +269,13 @@ async def delete_notebook(
     )
     await session.commit()
     await hub.publish(user.id, {"type": "notebook_deleted", "cursor": event.id})
+    if active_share is not None:
+        await hub.publish(active_share.id, {"type": "ended"})
+        from .study_shares import frame_path
+
+        try:
+            frame_path(active_share.id).unlink(missing_ok=True)
+        except OSError:
+            # Deletion/revocation is already committed and must still succeed.
+            pass
     return response
