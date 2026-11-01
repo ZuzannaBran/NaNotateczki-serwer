@@ -147,6 +147,36 @@ def _merge_page(
     return result
 
 
+
+async def require_verified_base(
+    session: AsyncSession,
+    record: SyncedNotebook,
+    revision: int,
+    submitted: dict,
+) -> None:
+    """Never trust a client's claimed common ancestor in a shared edit."""
+    if revision > record.revision:
+        raise HTTPException(status_code=409, detail="Unknown base revision.")
+    if revision == record.revision:
+        authoritative = record.content
+    else:
+        authoritative = await session.scalar(
+            select(ChangeEvent.content)
+            .where(
+                ChangeEvent.owner_id == record.owner_id,
+                ChangeEvent.entity_uid == record.uid,
+                ChangeEvent.revision == revision,
+                ChangeEvent.deleted.is_(False),
+            )
+            .order_by(ChangeEvent.id.desc())
+            .limit(1)
+        )
+    if authoritative is None or authoritative != submitted:
+        raise HTTPException(
+            status_code=409, detail="Unverified document base revision."
+        )
+
+
 def merge_share_document(
     base: dict, changed: dict, latest: dict,
     clock: dict | None = None, received_at: datetime | None = None,
@@ -369,6 +399,9 @@ async def edit_shared_document(
             body.notebook.get("uid") != share.document_uid or
             body.baseRevision > notebook.revision):
         raise HTTPException(status_code=409, detail="Document revision mismatch.")
+    await require_verified_base(
+        session, notebook, body.baseRevision, body.baseNotebook
+    )
     clock = dict(share.edit_clock or {})
     changed = merge_share_document(
         body.baseNotebook, body.notebook, notebook.content,
