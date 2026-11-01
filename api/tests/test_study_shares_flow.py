@@ -4,6 +4,7 @@ These isolated tests use the real FastAPI router and a narrowly scoped
 in-memory substitute for its SQLAlchemy queries. They require no PostgreSQL.
 """
 
+import copy
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -39,6 +40,7 @@ class MemorySession:
         self.shares = {}
         self.grants = {}
         self.events = []
+        self.history = {}
 
     async def __aenter__(self):
         return self
@@ -62,6 +64,12 @@ class MemorySession:
                  if share.id in params and (share.owner_id in params or len(params) == 1)),
                 None,
             )
+        if entity is ChangeEvent:
+            return next((
+                copy.deepcopy(snapshot)
+                for (owner, uid, revision), snapshot in self.history.items()
+                if owner in params and uid in params and revision in params
+            ), None)
         if entity is StudyShareGrant:
             return next(
                 (grant for grant in self.grants.values()
@@ -79,6 +87,11 @@ class MemorySession:
     def add(self, model):
         if isinstance(model, StudyShare):
             self.shares[model.id] = model
+            for note in self.notebooks:
+                if note.owner_id == model.owner_id and note.uid == model.document_uid:
+                    self.history[(note.owner_id, note.uid, note.revision)] = (
+                        copy.deepcopy(note.content)
+                    )
         elif isinstance(model, StudyShareGrant):
             self.grants[model.id] = model
         elif isinstance(model, ChangeEvent):
@@ -98,7 +111,11 @@ class MemorySession:
         pass
 
     async def commit(self):
-        pass
+        for note in self.notebooks:
+            if note.content is not None:
+                self.history[(note.owner_id, note.uid, note.revision)] = (
+                    copy.deepcopy(note.content)
+                )
 
 
 @pytest.fixture
@@ -689,8 +706,9 @@ def test_owner_change_feed_contains_merged_guest_strokes(monkeypatch):
     events = []
 
     class OwnerSession:
-        async def scalar(self, _statement):
-            return share
+        async def scalar(self, statement):
+            entity = statement.column_descriptions[0]["entity"]
+            return original if entity is ChangeEvent else share
 
         async def execute(self, _statement):
             return SimpleNamespace(scalar_one_or_none=lambda: record)
@@ -735,3 +753,31 @@ def test_owner_change_feed_contains_merged_guest_strokes(monkeypatch):
     assert {stroke["id"] for stroke in events[0].content["pages"][0]["inkStrokes"]} == {
         "guest", "owner",
     }
+
+
+def test_guest_rejects_fabricated_base_snapshot(environment):
+    """A forged common ancestor cannot overwrite already committed content."""
+    import copy
+
+    client, db, _, _ = environment
+    original = _editable_notebook()
+    db.notebooks[0].content = original
+    share_id = create(client).json()["id"]
+    ticket = join(client, share_id).json()["ticket"]
+    fabricated = copy.deepcopy(original)
+    fabricated["pages"][0]["inkStrokes"] = [{"id": "invented-before"}]
+    modified = copy.deepcopy(fabricated)
+    modified["pages"][0]["inkStrokes"] = [{"id": "invented-after"}]
+    response = client.put(
+        f"/v1/study-shares/{share_id}/document",
+        headers={"Authorization": f"Bearer {ticket}"},
+        json={
+            "baseRevision": 1,
+            "baseNotebook": fabricated,
+            "notebook": modified,
+        },
+    )
+    assert response.status_code == 409
+    assert db.notebooks[0].revision == 1
+    assert db.notebooks[0].content == original
+
