@@ -13,7 +13,8 @@ directory (by default `/srv/nanotateczki/data/`):
 These paths live outside the public Caddy `web-dist/` directory. The API
 creates directories with mode 0700 and files with mode 0600. Do not publish
 the JSON files or include them in public web builds. They may contain stack
-traces and local paths. Back up `data/` using the existing server backup.
+traces and local paths. The server backup script now archives the entire `data/` directory, including
+feedback and diagnostics, alongside device snapshots.
 
 `POST /v1/reports/feedback` accepts `{"system":"Linux","issue":"..."}`
 without sign-in, subject to a rate limit. `PUT /v1/reports/diagnostics`

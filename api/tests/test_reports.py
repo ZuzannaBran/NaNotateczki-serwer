@@ -51,3 +51,14 @@ def test_feedback_and_diagnostics_validation():
             deviceId=uuid.uuid4(), system="Web", errors="x" * 32001,
             dataIntegrity="", optimization="",
         )
+
+
+def test_server_backup_includes_reports_directory():
+    from pathlib import Path
+
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "backup-server.sh"
+    ).read_text()
+    assert '"$staging/device-backups.tar.gz" data' in script

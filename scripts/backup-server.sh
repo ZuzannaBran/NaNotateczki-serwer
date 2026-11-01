@@ -46,7 +46,7 @@ docker compose --project-directory "$project_root" exec -T db \
   > "$staging/postgres.dump"
 
 tar --exclude='*.upload' -C "$project_root" -czf \
-  "$staging/device-backups.tar.gz" data/backups
+  "$staging/device-backups.tar.gz" data
 tar -C "$project_root" -czf "$staging/deployment-metadata.tar.gz" \
   compose.yaml compose.public.yaml Caddyfile migrations
 
