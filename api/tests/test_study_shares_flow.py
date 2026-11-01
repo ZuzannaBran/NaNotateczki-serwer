@@ -59,12 +59,18 @@ class MemorySession:
                 None,
             )
         if entity is StudyShare:
+            # Owner lifecycle calls must still find expired/revoked sessions.
+            if any(share.id in params for share in self.shares.values()):
+                return next(
+                    (share for share in self.shares.values()
+                     if share.id in params
+                     and (share.owner_id in params or len(params) == 1)),
+                    None,
+                )
             return next(
                 (share for share in self.shares.values()
-                 if (
-                     share.id in params or
-                     (share.owner_id in params and share.document_uid in params)
-                 ) and (share.owner_id in params or len(params) == 1)
+                 if share.owner_id in params
+                 and share.document_uid in params
                  and share.revoked_at is None
                  and share.expires_at > datetime.now(UTC)),
                 None,
