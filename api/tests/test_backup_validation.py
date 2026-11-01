@@ -160,3 +160,37 @@ def test_rejects_tampering_and_malformed_notebooks_with_wire_checksum() -> None:
     bad_raw = prefix + b',"payload":' + malformed + b"}"
     with pytest.raises(ValueError, match="notebook payload is incomplete"):
         validate_envelope(json.loads(bad_raw), record, original_json=bad_raw)
+
+
+
+def test_account_preferences_are_optional_but_validated() -> None:
+    record = backup_record(uuid.uuid4())
+    payload = {
+        "notebooks": [],
+        "libraryState": {},
+        "studyPlannerState": {},
+        "appPreferences": {"darkMode": True},
+        "editorPreferences": {},
+        "recentColors": [4278190080],
+        "backupPreferences": {"version": 1, "idleSeconds": 900},
+    }
+    envelope = {
+        "format": "nanotateczki-server-backup",
+        "version": 2,
+        "deviceId": str(record.device_id),
+        "checksumAlgorithm": "sha256",
+        "payload": payload,
+    }
+    envelope["checksum"] = compact_sha256(payload)
+    validate_envelope(envelope, record)
+
+    payload["recentColors"] = [True]
+    envelope["checksum"] = compact_sha256(payload)
+    with pytest.raises(ValueError):
+        validate_envelope(envelope, record)
+
+    payload["recentColors"] = []
+    payload["backupPreferences"]["idleSeconds"] = 1
+    envelope["checksum"] = compact_sha256(payload)
+    with pytest.raises(ValueError):
+        validate_envelope(envelope, record)
