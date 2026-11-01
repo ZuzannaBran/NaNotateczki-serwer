@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import uuid
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from ..settings import get_settings
 
 
 router = APIRouter(prefix="/v1/backups", tags=["backups"])
+logger = logging.getLogger(__name__)
 
 
 def backup_root() -> Path:
@@ -145,8 +147,9 @@ async def finalize_backup(
     try:
         raw = await asyncio.to_thread(temporary.read_bytes)
         envelope = json.loads(raw)
-        validate_envelope(envelope, backup)
+        validate_envelope(envelope, backup, original_json=raw)
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+        logger.warning("Rejected backup %s: %s", backup.id, error)
         backup.status = "rejected"
         await session.commit()
         temporary.unlink(missing_ok=True)
@@ -163,7 +166,88 @@ async def finalize_backup(
     }
 
 
-def validate_envelope(envelope: object, backup: DeviceBackup) -> None:
+def original_payload_json(raw: bytes) -> memoryview:
+    """Read the payload's wire bytes without reparsing the full backup.
+
+    The caller has already validated the complete JSON using json.loads.
+    Dart and Python may serialize equivalent JSON numbers differently.
+    """
+    offset = 0
+    while offset < len(raw) and raw[offset] in b" \t\r\n":
+        offset += 1
+    if offset >= len(raw) or raw[offset] != ord("{"):
+        raise ValueError("backup envelope must be an object")
+    offset += 1
+    payload_range: tuple[int, int] | None = None
+
+    while offset < len(raw):
+        while offset < len(raw) and raw[offset] in b" \t\r\n":
+            offset += 1
+        if offset < len(raw) and raw[offset] == ord("}"):
+            break
+        if offset >= len(raw) or raw[offset] != ord('"'):
+            raise ValueError("invalid envelope key")
+        key_start = offset
+        offset += 1
+        while offset < len(raw):
+            if raw[offset] == ord("\\"):
+                offset += 2
+            elif raw[offset] == ord('"'):
+                offset += 1
+                break
+            else:
+                offset += 1
+        key = json.loads(raw[key_start:offset])
+        while offset < len(raw) and raw[offset] in b" \t\r\n":
+            offset += 1
+        if offset >= len(raw) or raw[offset] != ord(":"):
+            raise ValueError("invalid envelope separator")
+        offset += 1
+        while offset < len(raw) and raw[offset] in b" \t\r\n":
+            offset += 1
+        value_start = offset
+        depth = 0
+        quoted = False
+        while offset < len(raw):
+            character = raw[offset]
+            if quoted:
+                if character == ord("\\"):
+                    offset += 2
+                    continue
+                if character == ord('"'):
+                    quoted = False
+            elif character == ord('"'):
+                quoted = True
+            elif character in (ord("{"), ord("[")):
+                depth += 1
+            elif character in (ord("}"), ord("]")):
+                if depth == 0:
+                    break
+                depth -= 1
+            elif character == ord(",") and depth == 0:
+                break
+            offset += 1
+        if key == "payload":
+            end = offset
+            while end > value_start and raw[end - 1] in b" \t\r\n":
+                end -= 1
+            payload_range = (value_start, end)
+        if offset < len(raw) and raw[offset] == ord(","):
+            offset += 1
+        elif offset < len(raw) and raw[offset] == ord("}"):
+            break
+        else:
+            raise ValueError("invalid envelope delimiter")
+
+    if payload_range is None:
+        raise ValueError("missing backup payload")
+    start, end = payload_range
+    return memoryview(raw)[start:end]
+
+
+def validate_envelope(
+    envelope: object, backup: DeviceBackup, *, original_json: bytes | None = None
+) -> None:
     if not isinstance(envelope, dict):
         raise ValueError("backup envelope must be an object")
     if (
@@ -191,7 +275,13 @@ def validate_envelope(envelope: object, backup: DeviceBackup) -> None:
         if uid in seen_uids:
             raise ValueError("duplicate notebook UID")
         seen_uids.add(uid)
-    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+    # Preserve the exact bytes signed by the Dart client. Python may rewrite
+    # JSON numbers such as 1e-7 into 1e-07 when serializing the parsed payload.
+    encoded = (
+        original_payload_json(original_json)
+        if original_json is not None
+        else json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+    )
     if hashlib.sha256(encoded).hexdigest() != envelope.get("checksum"):
         raise ValueError("payload checksum mismatch")
 

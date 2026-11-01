@@ -98,6 +98,13 @@ bezpieczne zarządzanie kluczami.
 
 ## Backup
 
+Walidator backupu v2 porównuje SHA-256 pola payload z dokładnymi bajtami JSON
+otrzymanymi od aplikacji, a nie z ponownie serializowanym obiektem Pythona.
+Dzięki temu poprawny JSON z Darta (np. zapis liczby 1e-7) jest akceptowany
+bez osłabiania kontroli sumy całego pliku i walidacji struktury. Przy
+odrzuceniu w logu API znajduje się przyczyna walidacji bez treści notatek.
+
+
 Po zalogowaniu klient może uruchomić `RemoteBackupScheduler`. Wysyła
 zweryfikowany snapshot po zmianach, ponawia błędy i normalnie zapisuje po ustawionym czasie bezczynności. Pliki są prywatne w `data/backups/<user-id>/`; serwer potwierdza rozmiar,
 SHA-256 i strukturę przed oznaczeniem ich jako poprawnych.
