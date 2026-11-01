@@ -17,7 +17,11 @@ router = APIRouter(tags=["realtime"])
 @router.websocket("/v1/realtime")
 async def realtime(websocket: WebSocket) -> None:
     settings = get_settings()
-    if websocket.headers.get("origin") != str(settings.app_origin).rstrip("/"):
+    # Browsers always send Origin, which must match the configured app.
+    # Native Dart WebSocket clients may omit Origin; their bearer token
+    # is still mandatory and validated before subscribing to account data.
+    origin = websocket.headers.get("origin")
+    if origin is not None and origin != str(settings.app_origin).rstrip("/"):
         await websocket.close(code=4403)
         return
     await websocket.accept()
