@@ -1,0 +1,11 @@
+services:
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:?Set a tested cloudflared digest}
+    restart: unless-stopped
+    read_only: true
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:?Set a tunnel token}
+    depends_on: [caddy]
+    mem_limit: 160m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [private]

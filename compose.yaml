@@ -1,0 +1,76 @@
+name: nanotateczki
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nanotateczki
+      POSTGRES_USER: nano_data
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U nano_data -d nanotateczki]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    shm_size: 128mb
+    mem_limit: 1200m
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nano_app:${APP_DB_PASSWORD}@db:5432/nanotateczki
+      APP_ORIGIN: https://app.${BASE_DOMAIN}
+      JWT_SECRET: ${JWT_SECRET}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      MAXIMUM_BACKUP_BYTES: ${MAXIMUM_BACKUP_BYTES:-67108864}
+      DATA_PATH: /data
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data:/data
+    mem_limit: 700m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [private]
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    read_only: true
+    environment:
+      API_DOMAIN: api.${BASE_DOMAIN}
+      APP_DOMAIN: app.${BASE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web-dist:/srv/app:ro
+    tmpfs:
+      - /config:size=16m
+      - /data:size=16m
+    ports:
+      - 127.0.0.1:8080:8080
+    depends_on: [api]
+    mem_limit: 200m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [private]
+
+volumes:
+  pg_data:
+
+networks:
+  private:
+    driver: bridge

@@ -1,0 +1,7 @@
+services:
+  api:
+    environment:
+      APP_ORIGIN: ${LOCAL_APP_ORIGIN:-http://localhost:3000}
+      ALLOW_REGISTRATION: "true"
+    ports:
+      - 127.0.0.1:18080:8000
