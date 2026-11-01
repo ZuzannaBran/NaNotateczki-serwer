@@ -183,7 +183,7 @@ async def put_notebook(
         entity_uid=uid,
         revision=record.revision,
         deleted=False,
-        content=body.notebook,
+        content=merged_notebook,
     )
     session.add(event)
     await session.flush()
