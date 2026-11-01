@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the local HTTP API against PostgreSQL without leaving test records."""
 
+import base64
 import hashlib
 import json
 import subprocess
@@ -148,7 +149,7 @@ def main() -> None:
         )[0], 409, "extension too early")
 
         # A complete, minimal 1x1 PNG instead of a synthetic header.
-        frame = __import__("base64").b64decode(
+        frame = base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
             "AAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg=="
         )
