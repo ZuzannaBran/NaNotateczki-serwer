@@ -96,6 +96,14 @@ Stare backupy v2 pozostają zgodne. Nowe snapshoty mogą dodatkowo zawierać
 Nie zmieniaj zastosowanych wcześniej migracji. Przed aktualizacją API
 wykonaj backup PostgreSQL i zastosuj `scripts/apply-migrations.sh`.
 
+### WebSocket na urządzeniach natywnych
+
+Przeglądarka musi wysyłać dokładny dozwolony `Origin`.
+Natywne klienty Flutter na Linuxie, Androidzie i iOS mogą połączyć się
+bez nagłówka `Origin`, ale nadal muszą podać ważny JWT w pierwszej
+wiadomości w ciągu 5 sekund. Obcy nagłówek `Origin` jest odrzucany
+kodem 4403. Po wygaśnięciu sesji serwer odcina WebSocket.
+
 ## Weryfikacja lokalna
 
 `python -m pytest -q api/tests` sprawdza uwierzytelnianie, walidację backupu,
