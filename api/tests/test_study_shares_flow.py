@@ -398,3 +398,81 @@ def test_cors_does_not_expose_ticket_to_foreign_browser(environment):
         "Authorization": f"Bearer {ticket}", "Origin": "https://evil.test",
     })
     assert "access-control-allow-origin" not in blocked.headers
+
+
+def test_two_guests_receive_the_same_revision(environment):
+    client, _, _, _ = environment
+    share_id = create(client).json()["id"]
+    first_ticket = join(client, share_id).json()["ticket"]
+    second_ticket = join(client, share_id).json()["ticket"]
+    url = f"/v1/study-shares/{share_id}/events"
+    headers = {"origin": "https://app.example.test"}
+    with client.websocket_connect(url, headers=headers) as first:
+        first.send_json({"type": "authenticate", "ticket": first_ticket})
+        assert first.receive_json()["type"] == "authenticated"
+        with client.websocket_connect(url, headers=headers) as second:
+            second.send_json({
+                "type": "authenticate", "ticket": second_ticket,
+            })
+            assert second.receive_json()["type"] == "authenticated"
+            response = client.put(
+                f"/v1/study-shares/{share_id}/frame",
+                content=png(), headers={"Content-Type": "image/png"},
+            )
+            assert response.status_code == 204
+            assert first.receive_json() == {
+                "type": "frame_changed", "revision": 1,
+            }
+            assert second.receive_json() == {
+                "type": "frame_changed", "revision": 1,
+            }
+
+
+def test_reconnect_reports_current_revision_and_restores_frame(environment):
+    client, _, _, _ = environment
+    share_id = create(client).json()["id"]
+    ticket = join(client, share_id).json()["ticket"]
+    url = f"/v1/study-shares/{share_id}/events"
+    headers = {"origin": "https://app.example.test"}
+    with client.websocket_connect(url, headers=headers) as websocket:
+        websocket.send_json({"type": "authenticate", "ticket": ticket})
+        assert websocket.receive_json()["revision"] == 0
+    for width in (2, 3):
+        assert client.put(
+            f"/v1/study-shares/{share_id}/frame",
+            content=png(width=width),
+            headers={"Content-Type": "image/png"},
+        ).status_code == 204
+    with client.websocket_connect(url, headers=headers) as websocket:
+        websocket.send_json({"type": "authenticate", "ticket": ticket})
+        assert websocket.receive_json() == {
+            "type": "authenticated", "revision": 2,
+        }
+        restored = client.get(
+            f"/v1/study-shares/{share_id}/frame",
+            headers={"Authorization": f"Bearer {ticket}"},
+        )
+        assert restored.status_code == 200
+        assert restored.content == png(width=3)
+
+
+def test_extension_notifies_connected_guests(environment):
+    client, db, _, _ = environment
+    share_id = create(client).json()["id"]
+    ticket = join(client, share_id).json()["ticket"]
+    url = f"/v1/study-shares/{share_id}/events"
+    with client.websocket_connect(
+        url, headers={"origin": "https://app.example.test"}
+    ) as websocket:
+        websocket.send_json({"type": "authenticate", "ticket": ticket})
+        assert websocket.receive_json()["type"] == "authenticated"
+        db.shares[uuid.UUID(share_id)].expires_at = (
+            datetime.now(UTC) + timedelta(minutes=5)
+        )
+        response = client.post(
+            f"/v1/study-shares/{share_id}/extend", json={}
+        )
+        assert response.status_code == 200
+        event = websocket.receive_json()
+        assert event["type"] == "extended"
+        assert event["expiresAt"] == response.json()["expiresAt"]
