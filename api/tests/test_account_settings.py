@@ -150,3 +150,42 @@ def test_conflicting_settings_require_no_automatic_overwrite(monkeypatch):
     assert conflict.value.status_code == 409
     assert session.commits == 0
     assert session.records[(account.id, "recentColors")].content == [4278190080]
+
+
+
+def test_read_settings_is_scoped_to_authenticated_owner():
+    first = uuid.uuid4()
+    second = uuid.uuid4()
+    records = [
+        AccountSettings(owner_id=first, category="appPreferences",
+                        revision=3, content={"darkMode": True}),
+        AccountSettings(owner_id=second, category="appPreferences",
+                        revision=8, content={"darkMode": False}),
+    ]
+
+    class FakeRows:
+        def __init__(self, matching):
+            self.matching = matching
+
+        def scalars(self):
+            return iter(self.matching)
+
+    class ReadSession:
+        async def execute(self, statement):
+            parameters = statement.compile().params.values()
+            ids = [value for value in parameters if isinstance(value, uuid.UUID)]
+            assert len(ids) == 1
+            return FakeRows([row for row in records if row.owner_id == ids[0]])
+
+    result = asyncio.run(api.get_account_settings(
+        User(id=first, username="user", password_hash="hash"),
+        ReadSession(),
+    ))
+    assert result == {
+        "settings": {
+            "appPreferences": {
+                "revision": 3,
+                "value": {"darkMode": True},
+            },
+        },
+    }
