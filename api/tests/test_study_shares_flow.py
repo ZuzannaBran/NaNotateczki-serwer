@@ -871,3 +871,51 @@ def test_deleting_shared_notebook_revokes_guest_access(monkeypatch):
     assert share.revoked_at is not None
     assert (share.id, {"type": "ended"}) in notifications
 
+
+
+def test_three_simultaneous_conflicts_keep_largest_then_ignore_late_write():
+    """Three contenders within one microsecond follow one stable winner."""
+    import copy
+    from app.routers.study_shares import merge_share_document
+
+    base = _editable_notebook()
+    base["pages"][0]["textBlocks"] = [{"id": "text", "text": "x"}]
+
+    def change(text):
+        candidate = copy.deepcopy(base)
+        candidate["pages"][0]["textBlocks"][0]["text"] = text
+        return candidate
+
+    t = datetime(2026, 11, 1, 12, 0, 0, 500, tzinfo=UTC)
+    clock = {}
+    first = merge_share_document(base, change("ab"), base, clock, t)
+    medium = merge_share_document(base, change("abcde"), first, clock, t)
+    biggest = merge_share_document(base, change("abcdefghijkl"), medium, clock, t)
+    assert biggest["pages"][0]["textBlocks"][0]["text"] == "abcdefghijkl"
+
+    later = merge_share_document(
+        base, change("z" * 100), biggest, clock, t + timedelta(microseconds=1)
+    )
+    assert later["pages"][0]["textBlocks"][0]["text"] == "abcdefghijkl"
+    assert clock["page/page-1/textBlocks/text"]["at"] == t.isoformat()
+
+
+def test_duplicate_retried_edit_is_noop_without_new_clock():
+    """A retried request after a lost HTTP response must be idempotent."""
+    import copy
+    from app.routers.study_shares import merge_share_document
+
+    base = _editable_notebook()
+    edited = copy.deepcopy(base)
+    edited["pages"][0]["inkStrokes"] = [{"id": "same-stroke"}]
+    t = datetime(2026, 11, 1, 12, 0, 0, 1, tzinfo=UTC)
+    clock = {}
+    accepted = merge_share_document(base, edited, base, clock, t)
+    first_clock = copy.deepcopy(clock)
+    repeated = merge_share_document(
+        base, edited, accepted, clock, t + timedelta(seconds=5)
+    )
+    assert repeated == accepted
+    assert clock == first_clock
+    assert len(repeated["pages"][0]["inkStrokes"]) == 1
+
