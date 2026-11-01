@@ -1,0 +1,152 @@
+"""Regression tests for versioned account preferences without PostgreSQL."""
+
+import asyncio
+import uuid
+
+import pytest
+from fastapi import HTTPException
+from pydantic import ValidationError
+
+from app.models import AccountSettings, User
+from app.routers import account_settings as api
+
+
+class MemorySession:
+    def __init__(self):
+        self.records = {}
+        self.locked = False
+        self.commits = 0
+
+    async def execute(self, statement):
+        # A user-row lock must precede all account settings writes.
+        assert "FOR UPDATE" in str(statement)
+        self.locked = True
+
+    async def get(self, model, identifier):
+        assert model is AccountSettings
+        assert self.locked
+        return self.records.get(identifier)
+
+    def add(self, record):
+        assert self.locked
+        self.records[(record.owner_id, record.category)] = record
+
+    async def commit(self):
+        self.commits += 1
+
+
+def test_rejects_unknown_and_invalid_settings():
+    with pytest.raises(ValueError):
+        api.validate_settings("recentColors", [True, 0])
+    with pytest.raises(ValueError):
+        api.validate_settings("recentColors", [-1])
+    with pytest.raises(ValueError):
+        api.validate_settings("recentColors", [0] * 13)
+    with pytest.raises(ValueError):
+        api.validate_settings("backupPreferences", {
+            "version": 1, "idleSeconds": 1
+        })
+    with pytest.raises(ValueError):
+        api.validate_settings("appPreferences", {"refreshToken": "secret"})
+    with pytest.raises(ValueError):
+        api.validate_settings("editorPreferences", {"password": "secret"})
+    with pytest.raises(ValueError):
+        api.validate_settings("editorPreferences", {"data": "x" * 140000})
+    with pytest.raises(ValidationError):
+        api.SettingsWrite(expectedRevision=-1, value={})
+    with pytest.raises(ValidationError):
+        api.SettingsWrite(expectedRevision=1, value={},
+                          unexpected="denied")
+
+
+def test_account_scoped_revisioned_writes_and_conflicts(monkeypatch):
+    account = User(id=uuid.uuid4(), username="account", password_hash="hash")
+    other = User(id=uuid.uuid4(), username="other", password_hash="hash")
+    session = MemorySession()
+    notifications = []
+
+    async def publish(target, message):
+        notifications.append((target, message))
+
+    monkeypatch.setattr(api.hub, "publish", publish)
+
+    async def run():
+        first = await api.put_account_settings(
+            "backupPreferences",
+            api.SettingsWrite(
+                expectedRevision=0,
+                value={"version": 1, "idleSeconds": 900},
+            ),
+            account,
+            session,
+        )
+        assert first["revision"] == 1
+        assert first["value"]["idleSeconds"] == 900
+
+        with pytest.raises(HTTPException) as conflict:
+            await api.put_account_settings(
+                "backupPreferences",
+                api.SettingsWrite(
+                    expectedRevision=0,
+                    value={"version": 1, "idleSeconds": 30},
+                ),
+                account,
+                session,
+            )
+        assert conflict.value.status_code == 409
+        assert conflict.value.detail["revision"] == 1
+        assert conflict.value.detail["value"]["idleSeconds"] == 900
+
+        second = await api.put_account_settings(
+            "backupPreferences",
+            api.SettingsWrite(
+                expectedRevision=1,
+                value={"version": 1, "idleSeconds": 300},
+            ),
+            account,
+            session,
+        )
+        assert second["revision"] == 2
+
+        separate = await api.put_account_settings(
+            "backupPreferences",
+            api.SettingsWrite(
+                expectedRevision=0,
+                value={"version": 1, "idleSeconds": 30},
+            ),
+            other,
+            session,
+        )
+        assert separate["revision"] == 1
+
+    asyncio.run(run())
+    assert session.commits == 3
+    assert session.records[(account.id, "backupPreferences")].revision == 2
+    assert session.records[(other.id, "backupPreferences")].revision == 1
+    assert len(notifications) == 3
+    assert notifications[0][0] == account.id
+    assert notifications[2][0] == other.id
+
+
+def test_conflicting_settings_require_no_automatic_overwrite(monkeypatch):
+    account = User(id=uuid.uuid4(), username="account", password_hash="hash")
+    session = MemorySession()
+    session.records[(account.id, "recentColors")] = AccountSettings(
+        owner_id=account.id, category="recentColors", revision=7,
+        content=[4278190080],
+    )
+
+    async def no_publish(*args, **kwargs):
+        pytest.fail("Conflict must not broadcast a change.")
+
+    monkeypatch.setattr(api.hub, "publish", no_publish)
+    with pytest.raises(HTTPException) as conflict:
+        asyncio.run(api.put_account_settings(
+            "recentColors",
+            api.SettingsWrite(expectedRevision=3, value=[4294967295]),
+            account,
+            session,
+        ))
+    assert conflict.value.status_code == 409
+    assert session.commits == 0
+    assert session.records[(account.id, "recentColors")].content == [4278190080]
