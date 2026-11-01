@@ -61,7 +61,12 @@ class MemorySession:
         if entity is StudyShare:
             return next(
                 (share for share in self.shares.values()
-                 if share.id in params and (share.owner_id in params or len(params) == 1)),
+                 if (
+                     share.id in params or
+                     (share.owner_id in params and share.document_uid in params)
+                 ) and (share.owner_id in params or len(params) == 1)
+                 and share.revoked_at is None
+                 and share.expires_at > datetime.now(UTC)),
                 None,
             )
         if entity is ChangeEvent:
@@ -780,4 +785,15 @@ def test_guest_rejects_fabricated_base_snapshot(environment):
     assert response.status_code == 409
     assert db.notebooks[0].revision == 1
     assert db.notebooks[0].content == original
+
+
+
+def test_cannot_open_two_active_shares_for_same_document(environment):
+    client, db, _, _ = environment
+    db.notebooks[0].content = _editable_notebook()
+    first = create(client)
+    assert first.status_code == 201, first.text
+    second = create(client)
+    assert second.status_code == 409, second.text
+    assert len(db.shares) == 1
 
