@@ -266,6 +266,21 @@ def validate_envelope(
         or not isinstance(payload.get("studyPlannerState"), dict)
     ):
         raise ValueError("incomplete backup payload")
+    # Optional metadata was added without changing backup envelope v2.
+    # Reject malformed additions instead of marking them as verified.
+    for key in ("appPreferences", "editorPreferences", "backupPreferences"):
+        if key in payload and not isinstance(payload[key], dict):
+            raise ValueError(f"invalid {key}")
+    if "recentColors" in payload:
+        recent = payload["recentColors"]
+        if (not isinstance(recent, list) or len(recent) > 12
+            or any(type(color) is not int or not 0 <= color <= 0xFFFFFFFF
+                   for color in recent)):
+            raise ValueError("invalid recentColors")
+    if payload.get("backupPreferences"):
+        from .account_settings import validate_settings
+
+        validate_settings("backupPreferences", payload["backupPreferences"])
     seen_uids: set[str] = set()
     for notebook in payload["notebooks"]:
         if not isinstance(notebook, dict):
@@ -294,7 +309,7 @@ async def list_backups(
     result = await session.execute(
         select(DeviceBackup)
         .where(DeviceBackup.owner_id == user.id, DeviceBackup.status == "verified")
-        .order_by(desc(DeviceBackup.created_at))
+        .order_by(desc(DeviceBackup.verified_at), desc(DeviceBackup.created_at))
         .limit(100)
     )
     return {
