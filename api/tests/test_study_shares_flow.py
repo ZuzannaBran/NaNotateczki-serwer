@@ -658,3 +658,80 @@ def test_caller_clock_cannot_choose_conflict_winner():
     assert "receivedAt" not in base
     result = merge_share_document(base, base, base, {}, datetime.now(UTC))
     assert result["pages"] == base["pages"]
+
+
+def test_owner_change_feed_contains_merged_guest_strokes(monkeypatch):
+    """Every event must contain the committed merge, not the stale request."""
+    import asyncio
+    import copy
+    from types import SimpleNamespace
+
+    from starlette.requests import Request
+
+    from app.routers import sync
+    from app.schemas import SyncWrite
+
+    original = _editable_notebook()
+    guest = copy.deepcopy(original)
+    guest["pages"][0]["inkStrokes"] = [{"id": "guest"}]
+    owner_edit = copy.deepcopy(original)
+    owner_edit["pages"][0]["inkStrokes"] = [{"id": "owner"}]
+    record = SyncedNotebook(
+        id=uuid.uuid4(), owner_id=OWNER_ID, uid=NOTE_UID,
+        content=guest, revision=2, deleted_at=None,
+    )
+    share = StudyShare(
+        id=uuid.uuid4(), owner_id=OWNER_ID, document_uid=NOTE_UID,
+        title="Shared", password_hash="unused",
+        revision=0, edit_clock={},
+        expires_at=datetime.now(UTC) + timedelta(hours=4),
+    )
+    events = []
+
+    class OwnerSession:
+        async def scalar(self, _statement):
+            return share
+
+        async def execute(self, _statement):
+            return SimpleNamespace(scalar_one_or_none=lambda: record)
+
+        async def get(self, _model, _identifier):
+            return None
+
+        def add(self, item):
+            if isinstance(item, ChangeEvent):
+                item.id = len(events) + 1
+                events.append(item)
+
+        async def flush(self):
+            pass
+
+        async def commit(self):
+            pass
+
+    async def no_op(*_args, **_kwargs):
+        pass
+
+    monkeypatch.setattr(sync, "lock_owner_events", no_op)
+    monkeypatch.setattr(sync, "hub", SimpleNamespace(publish=no_op))
+    response = asyncio.run(sync.put_notebook(
+        NOTE_UID,
+        SyncWrite(
+            expectedRevision=1,
+            baseNotebook=original,
+            notebook=owner_edit,
+        ),
+        Request({
+            "type": "http",
+            "headers": [(b"content-length", b"4096")],
+        }),
+        "test-idempotency-01234567",
+        User(id=OWNER_ID, username="owner", password_hash="unused"),
+        OwnerSession(),
+    ))
+    assert response["revision"] == 3
+    assert len(events) == 1
+    assert events[0].content == record.content
+    assert {stroke["id"] for stroke in events[0].content["pages"][0]["inkStrokes"]} == {
+        "guest", "owner",
+    }
