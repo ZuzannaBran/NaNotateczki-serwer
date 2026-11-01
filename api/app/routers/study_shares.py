@@ -279,11 +279,14 @@ async def watch_share(websocket: WebSocket, share_id: uuid.UUID) -> None:
                 event = await asyncio.wait_for(queue.get(), timeout=20)
             except TimeoutError:
                 event = {"type": "ping"}
+            # A revocation must reach already authenticated guests before
+            # their tickets stop passing authorization checks.
+            if event["type"] == "ended":
+                await websocket.send_json(event)
+                return
             async with session_factory() as session:
                 await guest_share(share_id, ticket, session)
             await websocket.send_json(event)
-            if event["type"] == "ended":
-                return
     except (WebSocketDisconnect, TimeoutError, json.JSONDecodeError,
             HTTPException, ValueError):
         try:
