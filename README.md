@@ -47,7 +47,8 @@ wariant włącza rejestrację tylko dla API dostępnego przez port loopback.
    Polecenie poprosi o hasło. Publiczna rejestracja pozostaje wyłączona.
 
 Przed uruchomieniem nowej wersji API wykonaj wszystkie migracje, w tym
-`0002_auth_version.sql` oraz `0003_username.sql`. Migracja nadaje istniejącym
+`0002_auth_version.sql`, `0003_username.sql` i
+`0007_account_settings.sql`. Migracja nadaje istniejącym
 kontom login z unikalnej części e-maila lub identyfikatora konta. Rejestracja i nowe hasło przy zmianie wymagają 8–128
 znaków; logowanie nadal akceptuje istniejące hasła 1–256 znaków. Endpoint
 `POST /v1/auth/change-password` wymaga tokenu Bearer oraz JSON z
@@ -78,6 +79,22 @@ Pełna kopia serwera wymaga osobnego fizycznego nośnika. Uruchamiaj regularnie
 `pg_dump -Fc`, snapshoty i manifest SHA-256; nie usuwa starszych kopii.
 Zaplanuj go w systemowym harmonogramie po udostępnieniu nośnika. Przed
 migracją wykonaj pełną kopię i test odtworzenia na osobnej instancji.
+
+## Synchronizacja ustawień konta
+
+`GET /v1/account-settings` zwraca osobne rewizje ustawień aplikacji,
+edytora, kolorów Recent i czasu bezczynności backupu.
+`PUT /v1/account-settings/{category}` wymaga tokenu Bearer,
+`expectedRevision` i `value`. Serwer zapisuje zmiany atomowo,
+a konflikt wersji zwraca 409 z bieżącym stanem bez nadpisywania danych.
+Po zapisie wysyłany jest sygnał WebSocket; klient okresowo uzgadnia
+trwały stan przez REST. Konto jest jedynym źródłem uprawnień do ustawień.
+
+Stare backupy v2 pozostają zgodne. Nowe snapshoty mogą dodatkowo zawierać
+`appPreferences`, `editorPreferences`, `recentColors` i
+`backupPreferences`; ich format jest weryfikowany przy finalize.
+Nie zmieniaj zastosowanych wcześniej migracji. Przed aktualizacją API
+wykonaj backup PostgreSQL i zastosuj `scripts/apply-migrations.sh`.
 
 ## Weryfikacja lokalna
 
