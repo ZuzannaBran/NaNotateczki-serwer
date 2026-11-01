@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from .database import engine
-from .routers import auth, backups, realtime, study_shares, sync
+from .routers import account_settings, auth, backups, realtime, study_shares, sync
 from .settings import get_settings
 
 
@@ -79,6 +79,7 @@ async def ready() -> dict:
 
 
 app.include_router(auth.router)
+app.include_router(account_settings.router)
 app.include_router(backups.router)
 app.include_router(sync.router)
 app.include_router(realtime.router)
