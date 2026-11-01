@@ -143,3 +143,15 @@ A host sees a warning five minutes before expiration; POST
 extends the session by four hours and keeps existing guest tickets valid.
 The same link and password remain active. Guests receive an `extended`
 WebSocket event. No guest can extend a session.
+
+## Własność i trwały zapis projektu
+
+Sesja jest wyłącznie warstwą udostępniania nad istniejącym dokumentem
+`synced_notebooks` właściciela. Przed utworzeniem sprawdzamy, że
+dokument należy do konta i nie został usunięty. Zamknięcie i wygaśnięcie
+sesji nie zmienia `synced_notebooks`, jego UID, folderu, historii ani
+backupu. Usuwane są jedynie udostępnione klatki PNG i dostęp gości.
+
+Klient powinien opróżnić lokalną kolejkę zapisu i wykonać `syncNow()`
+przed utworzeniem oraz zakończeniem sesji; gdy są błędy lub oczekujące
+zmiany, nie może pokazać powodzenia zapisu na koncie.

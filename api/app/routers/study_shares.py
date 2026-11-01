@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import database_session, session_factory
-from ..models import StudyShare, StudyShareGrant, User
+from ..models import StudyShare, StudyShareGrant, SyncedNotebook, User
 from ..rate_limit import InMemoryRateLimiter
 from ..realtime_hub import hub
 from ..security import current_user, hash_password, token_digest, verify_password
@@ -107,11 +107,29 @@ async def create_share(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    # A session is an overlay on an existing, owner-owned cloud document.
+    # It must never become the only persisted copy of a user's work.
+    notebook = await session.scalar(
+        select(SyncedNotebook).where(
+            SyncedNotebook.owner_id == user.id,
+            SyncedNotebook.uid == body.documentUid,
+            SyncedNotebook.deleted_at.is_(None),
+        )
+    )
+    if notebook is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Save this document to your account before sharing.",
+        )
+    if not isinstance(notebook.content, dict) or notebook.content.get("kind") not in (0, 1):
+        raise HTTPException(
+            status_code=422, detail="Only notebooks and boards can be shared."
+        )
     share = StudyShare(
         id=uuid.uuid4(),
         owner_id=user.id,
         document_uid=body.documentUid,
-        title=body.title,
+        title=str(notebook.content.get("title") or body.title)[:200],
         password_hash=hash_password(body.password),
         revision=0,
         expires_at=datetime.now(UTC) + timedelta(hours=4),

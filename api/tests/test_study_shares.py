@@ -33,3 +33,21 @@ def test_extension_requires_owner_authentication():
     parameters = inspect.signature(extend_share).parameters
     assert 'user' in parameters
     assert 'session' in parameters
+
+
+def test_share_creation_checks_owner_cloud_document():
+    # An uncommitted local notebook is not a valid owner-account copy.
+    import inspect
+    from app.routers.study_shares import create_share
+    source = inspect.getsource(create_share)
+    assert "SyncedNotebook.owner_id == user.id" in source
+    assert "SyncedNotebook.deleted_at.is_(None)" in source
+    assert "Save this document to your account" in source
+
+
+def test_share_closure_does_not_delete_account_document():
+    import inspect
+    from app.routers.study_shares import end_share
+    source = inspect.getsource(end_share)
+    assert "SyncedNotebook" not in source
+    assert "frame_path(share_id).unlink" in source
