@@ -13,7 +13,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import database_session, session_factory
@@ -194,6 +194,34 @@ async def read_frame(
         destination, media_type="image/png", headers={"Cache-Control": "no-store"}
     )
 
+
+
+
+@router.post("/v1/study-shares/{share_id}/extend")
+async def extend_share(
+    share_id: uuid.UUID,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    share = await owner_share(share_id, user, session, lock=True)
+    ensure_active(share)
+    now = datetime.now(UTC)
+    if share.expires_at - now > timedelta(minutes=15):
+        raise HTTPException(
+            status_code=409, detail="The session is not close to expiring."
+        )
+    share.expires_at += timedelta(hours=4)
+    await session.execute(
+        update(StudyShareGrant)
+        .where(StudyShareGrant.share_id == share_id)
+        .values(expires_at=share.expires_at)
+    )
+    await session.commit()
+    expires_at = share.expires_at.isoformat()
+    await hub.publish(
+        share_id, {"type": "extended", "expiresAt": expires_at}
+    )
+    return {"expiresAt": expires_at}
 
 @router.delete("/v1/study-shares/{share_id}", status_code=204)
 async def end_share(

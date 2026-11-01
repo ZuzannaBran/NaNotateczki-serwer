@@ -137,3 +137,9 @@ Cloudflare Tunnel: existing app and api hostnames both route to Caddy :8080.
 Enable WebSockets in Cloudflare Network settings. Never open router ports.
 Disable caching for /v1/study-shares/* and authenticated API responses.
 The browser must be rebuilt with BACKEND_URL set to the public HTTPS API.
+
+A host sees a warning five minutes before expiration; POST
+`/v1/study-shares/{id}/extend` is allowed only in the last 15 minutes,
+extends the session by four hours and keeps existing guest tickets valid.
+The same link and password remain active. Guests receive an `extended`
+WebSocket event. No guest can extend a session.

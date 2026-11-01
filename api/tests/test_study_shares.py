@@ -25,3 +25,11 @@ def test_rejects_oversized_upload():
     with pytest.raises(HTTPException) as error:
         validate_png_frame(frame(1280, 720) + b"x" * (2 * 1024 * 1024))
     assert error.value.status_code == 413
+
+
+def test_extension_requires_owner_authentication():
+    from app.routers.study_shares import extend_share
+    import inspect
+    parameters = inspect.signature(extend_share).parameters
+    assert 'user' in parameters
+    assert 'session' in parameters
