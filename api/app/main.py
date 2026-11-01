@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from .database import engine
-from .routers import auth, backups, realtime, sync
+from .routers import auth, backups, realtime, study_shares, sync
 from .settings import get_settings
 
 
@@ -45,7 +45,9 @@ async def security_boundary(request: Request, call_next):
             return JSONResponse(
                 status_code=411, content={"detail": "Content-Length is required."}
             )
-        if request.url.path.startswith("/v1/sync/notebooks/"):
+        if request.url.path.startswith("/v1/study-shares/") and request.url.path.endswith("/frame"):
+            maximum = 2 * 1024 * 1024
+        elif request.url.path.startswith("/v1/sync/notebooks/"):
             maximum = settings.maximum_sync_bytes
         elif request.url.path.startswith("/v1/backups/") and request.url.path.endswith(
             "/content"
@@ -78,3 +80,4 @@ app.include_router(auth.router)
 app.include_router(backups.router)
 app.include_router(sync.router)
 app.include_router(realtime.router)
+app.include_router(study_shares.router)

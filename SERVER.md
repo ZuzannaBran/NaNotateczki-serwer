@@ -122,3 +122,18 @@ migracją wykonaj pełną kopię i test odtworzenia na osobnej instancji.
 granice HTTP i konfigurację wdrożenia. Testy integracyjne z PostgreSQL,
 równoległym zapisem dwóch sesji i odtworzeniem backupu są potrzebne przed
 udostępnieniem usługi użytkownikom. Sam zestaw jednostkowy ich nie zastępuje.
+
+
+## Shared study sessions (Web)
+
+Run migration 0004_study_shares.sql before deploying the new API.
+Signed-in hosts create four-hour password-protected view-only sessions.
+Guests use the link, enter the password, and receive a session ticket held
+only in memory; they never receive the host account token or notebook data.
+Snapshots are private PNG files in data/study-shares (API UID 1000), not
+public Caddy files. The host may revoke the session at any time.
+
+Cloudflare Tunnel: existing app and api hostnames both route to Caddy :8080.
+Enable WebSockets in Cloudflare Network settings. Never open router ports.
+Disable caching for /v1/study-shares/* and authenticated API responses.
+The browser must be rebuilt with BACKEND_URL set to the public HTTPS API.
