@@ -109,6 +109,42 @@ def test_access_token_is_bound_to_user_and_type() -> None:
         decode_access_token(token + "tampered")
 
 
+@pytest.mark.parametrize("account_exists", [False, True])
+def test_invalid_login_uses_username_message_without_revealing_account(
+    account_exists: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = User(
+        id=uuid.uuid4(),
+        username="test_user",
+        password_hash=hash_password("correct horse battery staple"),
+        auth_version=1,
+    ) if account_exists else None
+
+    class Result:
+        def scalar_one_or_none(self) -> User | None:
+            return user
+
+    class Session:
+        async def execute(self, statement: object) -> Result:
+            return Result()
+
+        async def commit(self) -> None:
+            raise AssertionError("An invalid login must not create a session")
+
+    async def skip_rate_limit(request: object, username: str) -> None:
+        pass
+
+    monkeypatch.setattr(auth, "limit_auth", skip_rate_limit)
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(auth.login(
+            Credentials(username="test_user", password="incorrect password"),
+            None,
+            Session(),
+        ))
+    assert error.value.status_code == 401
+    assert error.value.detail == "Invalid username or password."
+
+
 def test_old_access_token_is_rejected_after_password_version_changes() -> None:
     user = User(
         id=uuid.uuid4(),

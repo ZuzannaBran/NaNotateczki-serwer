@@ -92,7 +92,7 @@ async def login(
     encoded_hash = user.password_hash if user is not None else dummy_password_hash
     password_valid = verify_password(credentials.password, encoded_hash)
     if user is None or not password_valid:
-        raise HTTPException(status_code=401, detail="Invalid e-mail or password.")
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
     refresh_token, _ = await create_refresh_session(session, user)
     await session.commit()
     return session_response(user, refresh_token)
