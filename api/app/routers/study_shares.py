@@ -315,6 +315,24 @@ async def create_share(
         raise HTTPException(
             status_code=422, detail="Only notebooks and boards can be shared."
         )
+    # Serialize creation with owner writes and other concurrent share creation.
+    await lock_owner_events(session, user.id)
+    existing = await session.scalar(
+        select(StudyShare)
+        .where(
+            StudyShare.owner_id == user.id,
+            StudyShare.document_uid == body.documentUid,
+            StudyShare.revoked_at.is_(None),
+            StudyShare.expires_at > datetime.now(UTC),
+        )
+        .limit(1)
+        .with_for_update()
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This document already has an active sharing session.",
+        )
     share = StudyShare(
         id=uuid.uuid4(),
         owner_id=user.id,
