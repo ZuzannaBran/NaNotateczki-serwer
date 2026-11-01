@@ -108,7 +108,8 @@ w `server/SECURITY_DEPLOY.md`.
 ## Wspólna edycja na Web
 
 Przed wdrożeniem API zastosuj **obie** migracje:
-`0004_study_shares.sql` i `0005_study_share_edit_clock.sql`.
+`0004_study_shares.sql`, `0005_study_share_edit_clock.sql` i
+`0006_change_events_document_revision.sql`.
 Nie modyfikuj migracji już zastosowanych. Użyj:
 `scripts/apply-migrations.sh` przed `docker compose up -d --build api caddy`.
 
@@ -118,7 +119,11 @@ ale uprawnienie zapisu ograniczone do jednego oryginalnego UID. Po
 zakończeniu albo wygaśnięciu (4 godziny) otrzyma HTTP 410.
 Przedłużenie w ostatnich 15 minutach dodaje 4 godziny bez nowego linku.
 
-Goście i właściciel wysyłają zmiany do `synced_notebooks` przez REST,
+Goście i właściciel wysyłają zmiany do `synced_notebooks` przez REST.
+Baza przesyłana przez klienta musi odpowiadać zapisanej wersji historycznej;
+serwer odrzuca spreparowane snapshoty i zapobiega równoległym sesjom
+tego samego dokumentu. Usunięcie oryginału unieważnia aktywną sesję.
+Zmiany trafiają do `synced_notebooks` przez REST,
 a WebSocket sygnalizuje rewizje niemal natychmiast. Serwer łączy niezależne
 obiekty; dla zmian tego samego obiektu stosuje kolejność przyjęcia z
 dokładnością do mikrosekund, a w remisie rozmiar modyfikacji. Metadane
