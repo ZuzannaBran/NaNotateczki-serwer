@@ -1,7 +1,10 @@
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
-from app.routers.study_shares import PNG_MAGIC, validate_png_frame
+from app.routers.study_shares import (
+    PNG_MAGIC, ShareCreate, ShareJoin, validate_png_frame,
+)
 
 
 def frame(width: int, height: int) -> bytes:
@@ -51,3 +54,16 @@ def test_share_closure_does_not_delete_account_document():
     source = inspect.getsource(end_share)
     assert "SyncedNotebook" not in source
     assert "frame_path(share_id).unlink" in source
+
+
+def test_session_password_allows_one_character():
+    creation = ShareCreate(documentUid="board", title="Board", password="x")
+    guest = ShareJoin(password="x")
+    assert creation.password == guest.password == "x"
+
+
+def test_session_password_rejects_empty_value():
+    with pytest.raises(ValidationError):
+        ShareCreate(documentUid="board", title="Board", password="")
+    with pytest.raises(ValidationError):
+        ShareJoin(password="")

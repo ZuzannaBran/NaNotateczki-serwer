@@ -22,7 +22,7 @@ from app.security import current_user
 OWNER_ID = uuid.UUID("d1111111-1111-4111-8111-111111111111")
 OTHER_ID = uuid.UUID("d2222222-2222-4222-8222-222222222222")
 NOTE_UID = "study-notebook"
-PASSWORD = "study-secret-123"
+PASSWORD = "x"
 
 
 class MemorySession:
@@ -177,7 +177,7 @@ def test_cannot_share_unsynced_foreign_deleted_or_planner(
 def test_create_input_validation(environment):
     client, db, _, _ = environment
     for body in [
-        {"documentUid": NOTE_UID, "title": "t", "password": "short"},
+        {"documentUid": NOTE_UID, "title": "t", "password": ""},
         {"documentUid": "", "title": "t", "password": PASSWORD},
         {"documentUid": NOTE_UID, "title": "", "password": PASSWORD},
     ]:

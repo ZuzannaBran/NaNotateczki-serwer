@@ -38,7 +38,7 @@ python3 scripts/smoke-local-api.py
 
 Smoke test używa prawdziwego HTTP i PostgreSQL: rejestruje tymczasowe
 konto, zapisuje notebook, sprawdza niedozwolone udostępnienie,
-zakłada link, dołącza gościa z hasłem, publikuje i pobiera PNG,
+zakłada link, dołącza gościa z jednoznakowym hasłem, publikuje i pobiera PNG,
 sprawdza ograniczenia przedłużenia, unieważnia sesję, potwierdza
 zachowanie źródłowej notatki i usuwa konto testowe.
 Nie uruchamiaj go na produkcyjnej bazie. Jeżeli smoke test przerwie się

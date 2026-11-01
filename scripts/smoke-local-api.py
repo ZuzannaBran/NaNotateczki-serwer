@@ -115,7 +115,7 @@ def main() -> None:
         status, missing_share = call(
             "POST", "/v1/study-shares",
             {"documentUid": "not-synced", "title": "Missing",
-             "password": "study-secret-123"},
+             "password": "x"},
             token=token,
         )
         expect(status, 409, "reject sharing an unsynced document")
@@ -123,7 +123,7 @@ def main() -> None:
         status, share = call(
             "POST", "/v1/study-shares",
             {"documentUid": uid, "title": "Live study test",
-             "password": "study-secret-123"},
+             "password": "x"},
             token=token,
         )
         expect(status, 201, "create study share")
@@ -135,7 +135,7 @@ def main() -> None:
         )[0], 401, "incorrect guest password")
         status, guest = call(
             "POST", share_path + "/join",
-            {"password": "study-secret-123"},
+            {"password": "x"},
         )
         expect(status, 200, "guest joins without account")
         ticket = guest["ticket"]
@@ -171,7 +171,7 @@ def main() -> None:
         )[0], 410, "revoked guest can no longer read")
         expect(call(
             "POST", share_path + "/join",
-            {"password": "study-secret-123"},
+            {"password": "x"},
         )[0], 410, "ended session cannot be rejoined")
         status, after_end = call("GET", "/v1/sync/bootstrap", token=token)
         expect(status, 200, "owner notebook remains after sharing")

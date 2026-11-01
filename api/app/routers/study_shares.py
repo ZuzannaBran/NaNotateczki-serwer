@@ -34,7 +34,7 @@ MAX_FRAME_BYTES = 2 * 1024 * 1024
 class ShareCreate(BaseModel):
     documentUid: str = Field(min_length=1, max_length=128)
     title: str = Field(min_length=1, max_length=200)
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class ShareJoin(BaseModel):
