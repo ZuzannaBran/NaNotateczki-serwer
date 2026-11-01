@@ -12,15 +12,17 @@ from fastapi import (
     WebSocket, WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import database_session, session_factory
-from ..models import StudyShare, StudyShareGrant, SyncedNotebook, User
+from ..models import ChangeEvent, StudyShare, StudyShareGrant, SyncedNotebook, User
 from ..rate_limit import InMemoryRateLimiter
 from ..realtime_hub import hub
+from ..schemas import validate_notebook_payload
 from ..security import current_user, hash_password, token_digest, verify_password
+from .sync import lock_owner_events
 from ..settings import get_settings
 
 
@@ -39,6 +41,164 @@ class ShareCreate(BaseModel):
 
 class ShareJoin(BaseModel):
     password: str = Field(min_length=1, max_length=128)
+
+
+class ShareDocumentWrite(BaseModel):
+    baseRevision: int = Field(ge=1)
+    baseNotebook: dict
+    notebook: dict
+
+    @field_validator("baseNotebook", "notebook")
+    @classmethod
+    def validate_document(cls, value: dict) -> dict:
+        validate_notebook_payload(value)
+        return value
+
+
+def _items_by_id(items: list[dict]) -> dict[str, dict]:
+    result = {}
+    for item in items:
+        uid = item.get("id")
+        if not isinstance(uid, str) or not uid or uid in result:
+            raise HTTPException(status_code=422, detail="Duplicate or invalid object ID.")
+        result[uid] = item
+    return result
+
+
+
+def _size_of_change(before: object, after: object) -> int:
+    original = json.dumps(before, sort_keys=True, separators=(",", ":")).encode()
+    changed = json.dumps(after, sort_keys=True, separators=(",", ":")).encode()
+    return abs(len(original) - len(changed)) + sum(
+        left != right for left, right in zip(original, changed)
+    )
+
+
+def _first_change_wins(
+    key: str, before: object, after: object,
+    actual: object, clock: dict, received_at: datetime,
+) -> bool:
+    """Order by server receipt time, not client clocks.
+
+    If both writes arrived in the same microsecond, the larger edit wins.
+    A committed owner change without a share clock always takes precedence
+    over a stale guest edit.
+    """
+    if actual == after:
+        return False
+    score = _size_of_change(before, after)
+    previous = clock.get(key)
+    if actual != before and actual != after:
+        if not isinstance(previous, dict):
+            return False
+        earlier = datetime.fromisoformat(previous["at"])
+        if earlier < received_at:
+            return False
+        if earlier == received_at and int(previous["size"]) >= score:
+            return False
+    clock[key] = {"at": received_at.isoformat(), "size": score}
+    return True
+
+
+def _merge_list(
+    base: list[dict], changed: list[dict], latest: list[dict],
+    clock: dict, prefix: str, received_at: datetime,
+) -> list[dict]:
+    old = _items_by_id(base)
+    new = _items_by_id(changed)
+    current = _items_by_id(latest)
+    merged = dict(current)
+    for uid in sorted(old.keys() | new.keys()):
+        before = old.get(uid)
+        after = new.get(uid)
+        if before == after:
+            continue
+        actual = current.get(uid)
+        if _first_change_wins(
+            f"{prefix}/{uid}", before, after, actual, clock, received_at
+        ):
+            if after is None:
+                merged.pop(uid, None)
+            else:
+                merged[uid] = after
+    return list(merged.values())
+
+
+def _merge_page(
+    base: dict, changed: dict, latest: dict,
+    clock: dict, received_at: datetime,
+) -> dict:
+    result = dict(latest)
+    prefix = f"page/{base['id']}"
+    for key in sorted(base.keys() | changed.keys()):
+        if key == "id":
+            continue
+        if key in ("inkStrokes", "textBlocks", "imageBlocks"):
+            result[key] = _merge_list(
+                base.get(key, []), changed.get(key, []), latest.get(key, []),
+                clock, f"{prefix}/{key}", received_at,
+            )
+        elif base.get(key) != changed.get(key):
+            if _first_change_wins(
+                f"{prefix}/{key}", base.get(key), changed.get(key),
+                latest.get(key), clock, received_at,
+            ):
+                result[key] = changed.get(key)
+    return result
+
+
+def merge_share_document(
+    base: dict, changed: dict, latest: dict,
+    clock: dict | None = None, received_at: datetime | None = None,
+) -> dict:
+    # A guest may edit the content, never relocate, rename, or re-own it.
+    immutable = ("uid", "kind", "folder", "title", "createdAt")
+    if any(changed.get(key) != base.get(key) for key in immutable):
+        raise HTTPException(status_code=409, detail="Document metadata changed.")
+    received_at = received_at or datetime.now(UTC)
+    clock = clock if clock is not None else {}
+    original = _items_by_id(base["pages"])
+    submitted = _items_by_id(changed["pages"])
+    current = _items_by_id(latest["pages"])
+    combined = dict(current)
+    for uid in sorted(original.keys() | submitted.keys()):
+        before = original.get(uid)
+        after = submitted.get(uid)
+        actual = current.get(uid)
+        if before == after:
+            continue
+        if before is None or after is None:
+            if _first_change_wins(
+                f"page/{uid}/structure", before, after,
+                actual, clock, received_at,
+            ):
+                if after is None:
+                    combined.pop(uid, None)
+                else:
+                    combined[uid] = after
+        elif actual is not None:
+            combined[uid] = _merge_page(
+                before, after, actual, clock, received_at,
+            )
+        # A concurrent deletion of this page cannot be undone by a stale
+        # update. The guest can create a new page with a distinct id.
+    merged = dict(latest)
+    merged["pages"] = list(combined.values())
+    try:
+        last_update = datetime.fromisoformat(
+            latest["updatedAt"].replace("Z", "+00:00")
+        )
+        if last_update.tzinfo is None:
+            last_update = last_update.replace(tzinfo=UTC)
+    except (ValueError, TypeError, KeyError) as error:
+        raise HTTPException(status_code=422, detail="Invalid timestamp.") from error
+    # Avoid touching updatedAt for rejected or duplicate changes.
+    if merged["pages"] != latest["pages"]:
+        merged["updatedAt"] = max(
+            datetime.now(UTC), last_update + timedelta(microseconds=1)
+        ).isoformat()
+    validate_notebook_payload(merged)
+    return merged
 
 
 def validate_png_frame(data: bytes) -> None:
@@ -137,6 +297,101 @@ async def create_share(
     session.add(share)
     await session.commit()
     return {"id": str(share.id), "expiresAt": share.expires_at.isoformat()}
+
+
+
+@router.get("/v1/study-shares/active")
+async def active_shares(
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    rows = await session.scalars(
+        select(StudyShare)
+        .where(StudyShare.owner_id == user.id,
+               StudyShare.revoked_at.is_(None),
+               StudyShare.expires_at > datetime.now(UTC))
+        .order_by(StudyShare.created_at.desc())
+    )
+    return {"sessions": [{
+        "id": str(share.id), "documentUid": share.document_uid,
+        "title": share.title, "expiresAt": share.expires_at.isoformat(),
+    } for share in rows]}
+
+
+@router.get("/v1/study-shares/{share_id}/document")
+async def read_shared_document(
+    share_id: uuid.UUID,
+    ticket: str = Depends(guest_ticket),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    share = await guest_share(share_id, ticket, session)
+    notebook = await session.scalar(
+        select(SyncedNotebook).where(
+            SyncedNotebook.owner_id == share.owner_id,
+            SyncedNotebook.uid == share.document_uid,
+            SyncedNotebook.deleted_at.is_(None),
+        )
+    )
+    if notebook is None or not isinstance(notebook.content, dict):
+        raise HTTPException(status_code=410, detail="The shared document is unavailable.")
+    return {"notebook": notebook.content, "revision": notebook.revision,
+            "expiresAt": share.expires_at.isoformat()}
+
+
+@router.put("/v1/study-shares/{share_id}/document")
+async def edit_shared_document(
+    share_id: uuid.UUID,
+    body: ShareDocumentWrite,
+    request: Request,
+    ticket: str = Depends(guest_ticket),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    length = request.headers.get("content-length", "")
+    if not length.isdigit() or int(length) > get_settings().maximum_sync_bytes:
+        raise HTTPException(status_code=413, detail="Document is too large.")
+    received_at = datetime.now(UTC)
+    share = await guest_share(share_id, ticket, session)
+    await lock_owner_events(session, share.owner_id)
+    # Lock the share itself as well, serializing revocation and guest writes.
+    share = await session.scalar(select(StudyShare)
+        .where(StudyShare.id == share_id).with_for_update())
+    ensure_active(share)
+    notebook = await session.scalar(
+        select(SyncedNotebook).where(
+            SyncedNotebook.owner_id == share.owner_id,
+            SyncedNotebook.uid == share.document_uid,
+            SyncedNotebook.deleted_at.is_(None),
+        ).with_for_update()
+    )
+    if notebook is None or not isinstance(notebook.content, dict):
+        raise HTTPException(status_code=410, detail="Document is unavailable.")
+    if (body.baseNotebook.get("uid") != share.document_uid or
+            body.notebook.get("uid") != share.document_uid or
+            body.baseRevision > notebook.revision):
+        raise HTTPException(status_code=409, detail="Document revision mismatch.")
+    clock = dict(share.edit_clock or {})
+    changed = merge_share_document(
+        body.baseNotebook, body.notebook, notebook.content,
+        clock, received_at,
+    )
+    if changed == notebook.content:
+        return {"notebook": notebook.content, "revision": notebook.revision}
+    share.edit_clock = clock
+    notebook.revision += 1
+    notebook.content = changed
+    notebook.updated_at = datetime.now(UTC)
+    event = ChangeEvent(
+        owner_id=share.owner_id, entity_uid=share.document_uid,
+        revision=notebook.revision, deleted=False, content=changed,
+    )
+    session.add(event)
+    await session.flush()
+    await session.commit()
+    await hub.publish(share.owner_id,
+                      {"type": "notebook_changed", "cursor": event.id})
+    await hub.publish(share_id,
+                      {"type": "document_changed", "revision": notebook.revision})
+    return {"notebook": changed, "revision": notebook.revision}
 
 
 @router.post("/v1/study-shares/{share_id}/join")

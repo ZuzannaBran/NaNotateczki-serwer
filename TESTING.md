@@ -1,4 +1,4 @@
-# Testy komunikacji i wspólnych sesji
+# Testy komunikacji i wspólnej edycji sesji
 
 ## Bez działającego serwera
 
@@ -26,7 +26,7 @@ poprawności transakcji PostgreSQL ani działania Cloudflare.
 ## Na działającym lokalnym API i PostgreSQL
 
 Wymagane są kontenery z repozytorium serwera, migracje
-`0001`–`0004_study_shares.sql`, aktywna lokalna rejestracja i port
+`0001`–`0005_study_share_edit_clock.sql`, aktywna lokalna rejestracja i port
 `127.0.0.1:18080`. Przed testem uruchom:
 
 ```bash
@@ -60,24 +60,26 @@ przed utworzeniem linku, jeżeli nie udało się zsynchronizować notatki.
 
 ## Weryfikacja w przeglądarkach po wdrożeniu
 
-To oddzielny **scenariusz ręczny, nie wynik zaliczonego testu**.
+**Stan WIP; poniższe scenariusze nie zostały jeszcze zaliczone.**
 
-1. Otwórz aplikację na `https://app.nanotateczki.pl`, zaloguj się,
-   włącz Web sync i utwórz notatnik z tekstem, rysunkiem i obrazem.
-2. Utwórz link sesji, otwórz go w prywatnej przeglądarce, nie loguj
-   gościa i podaj hasło. Złe hasło nie powinno wpuszczać.
-3. Rysuj i zmieniaj tekst u właściciela. Weryfikuj aktualizację PNG
-   i brak dostępu gościa do biblioteki oraz edycji.
-4. Odłącz na chwilę sieć gościa, podłącz ponownie; sprawdź odzyskanie
-   aktualnego obrazu. Powtórz z kilkoma gośćmi.
-5. Zakończ sesję i sprawdź komunikat `ended`, błąd `410` przy
-   ponownym pobieraniu obrazu oraz zachowanie oryginalnej notatki.
-6. Sprawdź wygaśnięcie po 4 h i przedłużenie w końcowym oknie 15 min.
-   Test przyspieszony można przeprowadzić na osobnej bazie testowej.
-7. Zweryfikuj WSS i brak cache na `/v1/study-shares/*` przez
-   publiczny Cloudflare Tunnel, a także ładowanie linku po odświeżeniu.
+1. Otwórz Flutter Web jako właściciel, zaloguj się i włącz Web sync.
+   Utwórz notatnik/board w folderze i wygeneruj link z hasłem.
+2. Gość otwiera link w trybie prywatnym, bez konta, i edytuje dokument
+   oryginalnymi narzędziami. Sprawdź tekst, rysowanie, gumkę i obrazy.
+3. Właściciel i dwóch gości równocześnie edytują różne obiekty:
+   wszystkie zmiany powinny zostać w oryginale bez kopii.
+4. Dwie osoby edytują ten sam obiekt: serwer rozstrzyga konflikt według
+   czasu przyjęcia do mikrosekundy, przy remisie wygrywa większa zmiana.
+5. Odłącz sieć gościa, edytuj, połącz ponownie; sprawdź retry, status
+   potwierdzenia i brak utraty wcześniejszych zmian.
+6. Odśwież stronę właściciela: odzyskaj trwającą sesję i oryginalny UID.
+7. Przedłuż sesję w ostatnich 15 minutach i sprawdź 4 godziny.
+8. Zakończ sesję w trakcie aktywnej edycji; stary bilet nie może już
+   zapisać dokumentu (HTTP 410); notatka zostaje w folderze właściciela.
+9. Sprawdź WSS, CORS, Cloudflare Tunnel oraz opóźnienie od zakończenia
+   gestu do wyświetlenia aktualizacji na drugim urządzeniu.
 
-**Aktualne ograniczenia:** testy automatyczne nie obejmują rzeczywistego
-Cloudflare, dwóch osobnych instancji Flutter Web, pełnego odtwarzania
-sesji właściciela po odświeżeniu strony ani pomiaru wydajności przy
-dużych kanwach. Nie traktuj tych scenariuszy jako zaliczonych.
+Nie uruchamiaj smoke testu na produkcyjnej bazie.
+Przed uruchomieniem lokalnego API zastosuj migrację
+`0005_study_share_edit_clock.sql`. Na obecnym etapie nie wykonano
+testów Flutter, rzeczywistego PostgreSQL ani przeglądarek.

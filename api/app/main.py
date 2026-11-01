@@ -45,7 +45,9 @@ async def security_boundary(request: Request, call_next):
             return JSONResponse(
                 status_code=411, content={"detail": "Content-Length is required."}
             )
-        if request.url.path.startswith("/v1/study-shares/") and request.url.path.endswith("/frame"):
+        if request.url.path.startswith("/v1/study-shares/") and request.url.path.endswith("/document"):
+            maximum = settings.maximum_sync_bytes
+        elif request.url.path.startswith("/v1/study-shares/") and request.url.path.endswith("/frame"):
             maximum = 2 * 1024 * 1024
         elif request.url.path.startswith("/v1/sync/notebooks/"):
             maximum = settings.maximum_sync_bytes

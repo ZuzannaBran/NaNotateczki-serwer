@@ -80,6 +80,14 @@ def validate_notebook_payload(value: dict[str, Any]) -> None:
 class SyncWrite(BaseModel):
     expectedRevision: int = Field(ge=0)
     notebook: dict[str, Any]
+    baseNotebook: dict[str, Any] | None = None
+
+    @field_validator("baseNotebook")
+    @classmethod
+    def validate_base(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None:
+            validate_notebook_payload(value)
+        return value
 
     @field_validator("notebook")
     @classmethod

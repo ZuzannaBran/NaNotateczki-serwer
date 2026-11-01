@@ -129,6 +129,9 @@ class StudyShare(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    edit_clock: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

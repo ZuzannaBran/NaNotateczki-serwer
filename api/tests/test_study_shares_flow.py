@@ -1,4 +1,4 @@
-"""HTTP and WebSocket contracts for read-only study shares.
+"""HTTP and WebSocket contracts for editable study shares.
 
 These isolated tests use the real FastAPI router and a narrowly scoped
 in-memory substitute for its SQLAlchemy queries. They require no PostgreSQL.
@@ -13,7 +13,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.database import database_session
 from app.main import app
-from app.models import StudyShare, StudyShareGrant, SyncedNotebook, User
+from app.models import ChangeEvent, StudyShare, StudyShareGrant, SyncedNotebook, User
 from app.realtime_hub import RealtimeHub
 from app.routers import study_shares as shares
 from app.security import current_user
@@ -38,6 +38,7 @@ class MemorySession:
         ]
         self.shares = {}
         self.grants = {}
+        self.events = []
 
     async def __aenter__(self):
         return self
@@ -58,7 +59,7 @@ class MemorySession:
         if entity is StudyShare:
             return next(
                 (share for share in self.shares.values()
-                 if share.id in params and share.owner_id in params),
+                 if share.id in params and (share.owner_id in params or len(params) == 1)),
                 None,
             )
         if entity is StudyShareGrant:
@@ -80,6 +81,9 @@ class MemorySession:
             self.shares[model.id] = model
         elif isinstance(model, StudyShareGrant):
             self.grants[model.id] = model
+        elif isinstance(model, ChangeEvent):
+            model.id = len(self.events) + 1
+            self.events.append(model)
         else:
             raise AssertionError(f"Unexpected INSERT on {type(model)}")
 
@@ -89,6 +93,9 @@ class MemorySession:
         for grant in self.grants.values():
             if grant.share_id in values.values():
                 grant.expires_at = values["expires_at"]
+
+    async def flush(self):
+        pass
 
     async def commit(self):
         pass
@@ -106,6 +113,9 @@ def environment(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(shares, "hub", RealtimeHub())
     monkeypatch.setattr(shares, "session_factory", lambda: db)
+    async def no_advisory_lock(*args):
+        return None
+    monkeypatch.setattr(shares, "lock_owner_events", no_advisory_lock)
     shares.join_limiter._entries.clear()
     shares.publish_limiter._entries.clear()
     try:
@@ -476,3 +486,175 @@ def test_extension_notifies_connected_guests(environment):
         event = websocket.receive_json()
         assert event["type"] == "extended"
         assert event["expiresAt"] == response.json()["expiresAt"]
+
+
+def _editable_notebook():
+    return {
+        "uid": NOTE_UID,
+        "title": "Real notebook",
+        "kind": 0,
+        "folder": "Studies",
+        "createdAt": "2026-11-01T11:00:00+00:00",
+        "updatedAt": "2026-11-01T12:00:00+00:00",
+        "pages": [{
+            "id": "page-1",
+            "title": "Page 1",
+            "isBookmarked": False,
+            "inkStrokes": [],
+            "textBlocks": [],
+            "imageBlocks": [],
+        }],
+    }
+
+
+def test_guest_can_edit_original_and_is_revoked_on_end(environment):
+    client, db, _, _ = environment
+    original = _editable_notebook()
+    db.notebooks[0].content = original
+    share_id = create(client).json()["id"]
+    url = f"/v1/study-shares/{share_id}/document"
+
+    assert client.get(url).status_code == 401
+    ticket = join(client, share_id).json()["ticket"]
+    bearer = {"Authorization": f"Bearer {ticket}"}
+    before = client.get(url, headers=bearer)
+    assert before.status_code == 200, before.text
+    assert before.json()["notebook"] == original
+
+    import copy
+    edited = copy.deepcopy(original)
+    edited["pages"][0]["inkStrokes"].append({
+        "id": "stroke-1", "points": [{"x": 2, "y": 4}],
+    })
+    response = client.put(url, headers=bearer, json={
+        "baseRevision": 1, "baseNotebook": original,
+        "notebook": edited,
+    })
+    assert response.status_code == 200, response.text
+    assert db.notebooks[0].content["pages"][0]["inkStrokes"][0]["id"] == "stroke-1"
+    assert db.notebooks[0].content["folder"] == "Studies"
+    assert db.notebooks[0].revision == 2
+    assert len(db.events) == 1
+
+    assert client.request(
+        "DELETE", f"/v1/study-shares/{share_id}", content=b""
+    ).status_code == 204
+    assert client.get(url, headers=bearer).status_code == 410
+    assert client.put(url, headers=bearer, json={
+        "baseRevision": 2, "baseNotebook": edited, "notebook": edited,
+    }).status_code == 410
+    assert db.notebooks[0].content["uid"] == NOTE_UID
+
+
+def test_guests_merge_independent_objects_without_lost_writes(environment):
+    import copy
+    client, db, _, _ = environment
+    original = _editable_notebook()
+    db.notebooks[0].content = original
+    share_id = create(client).json()["id"]
+    url = f"/v1/study-shares/{share_id}/document"
+    a = join(client, share_id).json()["ticket"]
+    b = join(client, share_id).json()["ticket"]
+
+    def add(stroke_id):
+        candidate = copy.deepcopy(original)
+        candidate["pages"][0]["inkStrokes"] = [{"id": stroke_id}]
+        return candidate
+
+    for ticket, stroke in [(a, "a"), (b, "b")]:
+        result = client.put(url, headers={
+            "Authorization": f"Bearer {ticket}",
+        }, json={
+            "baseRevision": 1, "baseNotebook": original,
+            "notebook": add(stroke),
+        })
+        assert result.status_code == 200, result.text
+    ids = {ink["id"] for ink in db.notebooks[0].content["pages"][0]["inkStrokes"]}
+    assert ids == {"a", "b"}
+    assert db.notebooks[0].revision == 3
+
+
+def test_guest_cannot_change_original_location_or_owner_fields(environment):
+    import copy
+    client, db, _, _ = environment
+    original = _editable_notebook()
+    db.notebooks[0].content = original
+    share_id = create(client).json()["id"]
+    ticket = join(client, share_id).json()["ticket"]
+    for key, value in [("uid", "other"), ("folder", "Other"),
+                       ("kind", 1), ("title", "Changed")]:
+        edited = copy.deepcopy(original)
+        edited[key] = value
+        result = client.put(
+            f"/v1/study-shares/{share_id}/document",
+            headers={"Authorization": f"Bearer {ticket}"},
+            json={
+                "baseRevision": 1, "baseNotebook": original,
+                "notebook": edited,
+            },
+        )
+        assert result.status_code == 409, result.text
+    assert db.notebooks[0].revision == 1
+
+
+def test_guest_changes_to_same_object_are_not_silently_overwritten(environment):
+    import copy
+    client, db, _, _ = environment
+    base = _editable_notebook()
+    base["pages"][0]["textBlocks"] = [{"id": "text", "text": "original"}]
+    db.notebooks[0].content = base
+    share_id = create(client).json()["id"]
+    token = join(client, share_id).json()["ticket"]
+    url = f"/v1/study-shares/{share_id}/document"
+    first = copy.deepcopy(base)
+    first["pages"][0]["textBlocks"][0]["text"] = "A"
+    second = copy.deepcopy(base)
+    second["pages"][0]["textBlocks"][0]["text"] = "B"
+    for doc, code in [(first, 200), (second, 200)]:
+        response = client.put(url, headers={
+            "Authorization": f"Bearer {token}",
+        }, json={
+            "baseRevision": 1, "baseNotebook": base, "notebook": doc,
+        })
+        assert response.status_code == code, response.text
+    assert db.notebooks[0].content["pages"][0]["textBlocks"][0]["text"] == "A"
+
+
+def test_server_arrival_time_chooses_first_write_then_larger_tie():
+    import copy
+    from app.routers.study_shares import merge_share_document
+
+    base = _editable_notebook()
+    base["pages"][0]["textBlocks"] = [{"id": "text-1", "text": "original"}]
+    first = copy.deepcopy(base)
+    first["pages"][0]["textBlocks"][0]["text"] = "first"
+    second = copy.deepcopy(base)
+    second["pages"][0]["textBlocks"][0]["text"] = "second-longer"
+    t = datetime(2026, 11, 1, 12, 0, 0, 100, tzinfo=UTC)
+    clock = {}
+
+    saved = merge_share_document(base, first, base, clock, t)
+    assert saved["pages"][0]["textBlocks"][0]["text"] == "first"
+
+    later = merge_share_document(
+        base, second, saved, clock, t + timedelta(microseconds=1)
+    )
+    assert later["pages"][0]["textBlocks"][0]["text"] == "first"
+
+    tied = merge_share_document(base, second, saved, clock, t)
+    assert tied["pages"][0]["textBlocks"][0]["text"] == "second-longer"
+
+    older = merge_share_document(
+        base, first, tied, clock, t - timedelta(microseconds=1)
+    )
+    assert older["pages"][0]["textBlocks"][0]["text"] == "first"
+
+
+def test_caller_clock_cannot_choose_conflict_winner():
+    from app.routers.study_shares import merge_share_document
+
+    base = _editable_notebook()
+    assert "edit_clock" not in base
+    assert "receivedAt" not in base
+    result = merge_share_document(base, base, base, {}, datetime.now(UTC))
+    assert result["pages"] == base["pages"]

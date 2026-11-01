@@ -8,7 +8,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import database_session
-from ..models import ChangeEvent, IdempotencyRecord, SyncedNotebook, User
+from ..models import ChangeEvent, IdempotencyRecord, StudyShare, SyncedNotebook, User
 from ..realtime_hub import hub
 from ..schemas import DeleteWrite, SyncWrite
 from ..security import current_user
@@ -126,16 +126,28 @@ async def put_notebook(
         raise HTTPException(status_code=422, detail="Notebook UID mismatch.")
     encoded = json.dumps(body.model_dump(), sort_keys=True, separators=(",", ":")).encode()
     request_hash = hashlib.sha256(encoded).hexdigest()
+    received_at = datetime.now(UTC)
     await lock_owner_events(session, user.id)
     previous = await idempotent_response(session, user.id, idempotency_key, request_hash)
     if previous is not None:
         return previous
+    # Shared edits use one ordering rule for owners and invited guests.
+    # Keep lock order: owner, share, notebook.
+    active_share = await session.scalar(
+        select(StudyShare).where(
+            StudyShare.owner_id == user.id,
+            StudyShare.document_uid == uid,
+            StudyShare.revoked_at.is_(None),
+            StudyShare.expires_at > datetime.now(UTC),
+        ).order_by(StudyShare.created_at.desc()).limit(1).with_for_update()
+    )
     result = await session.execute(
         select(SyncedNotebook)
         .where(SyncedNotebook.owner_id == user.id, SyncedNotebook.uid == uid)
         .with_for_update()
     )
     record = result.scalar_one_or_none()
+    merged_notebook = body.notebook
     if record is None:
         if body.expectedRevision != 0:
             await conflict(None, uid)
@@ -143,15 +155,26 @@ async def put_notebook(
             id=uuid.uuid4(),
             owner_id=user.id,
             uid=uid,
-            content=body.notebook,
+            content=merged_notebook,
             revision=1,
         )
         session.add(record)
     else:
-        if record.revision != body.expectedRevision:
+        if active_share is not None and body.baseNotebook is not None:
+            from .study_shares import merge_share_document
+
+            if body.baseNotebook.get("uid") != uid:
+                raise HTTPException(status_code=409, detail="Invalid base notebook.")
+            clock = dict(active_share.edit_clock or {})
+            merged_notebook = merge_share_document(
+                body.baseNotebook, body.notebook, record.content,
+                clock, received_at,
+            )
+            active_share.edit_clock = clock
+        elif record.revision != body.expectedRevision:
             await conflict(record, uid)
         record.revision += 1
-        record.content = body.notebook
+        record.content = merged_notebook
         record.deleted_at = None
         record.updated_at = datetime.now(UTC)
     await session.flush()
@@ -165,6 +188,8 @@ async def put_notebook(
     session.add(event)
     await session.flush()
     response = {"revision": record.revision, "cursor": event.id}
+    if active_share is not None:
+        response["notebook"] = merged_notebook
     session.add(
         IdempotencyRecord(
             owner_id=user.id,
@@ -175,6 +200,10 @@ async def put_notebook(
     )
     await session.commit()
     await hub.publish(user.id, {"type": "notebook_changed", "cursor": event.id})
+    if active_share is not None:
+        await hub.publish(active_share.id, {
+            "type": "document_changed", "revision": record.revision,
+        })
     return response
 
 
