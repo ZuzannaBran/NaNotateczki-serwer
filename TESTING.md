@@ -26,7 +26,7 @@ poprawności transakcji PostgreSQL ani działania Cloudflare.
 ## Na działającym lokalnym API i PostgreSQL
 
 Wymagane są kontenery z repozytorium serwera, migracje
-`0001`–`0005_study_share_edit_clock.sql`, aktywna lokalna rejestracja i port
+`0001`–`0006_change_events_document_revision.sql`, aktywna lokalna rejestracja i port
 `127.0.0.1:18080`. Przed testem uruchom:
 
 ```bash
@@ -81,5 +81,23 @@ przed utworzeniem linku, jeżeli nie udało się zsynchronizować notatki.
 
 Nie uruchamiaj smoke testu na produkcyjnej bazie.
 Przed uruchomieniem lokalnego API zastosuj migrację
-`0005_study_share_edit_clock.sql`. Na obecnym etapie nie wykonano
+`0005_study_share_edit_clock.sql` oraz
+`0006_change_events_document_revision.sql`. Na obecnym etapie nie wykonano
 testów Flutter, rzeczywistego PostgreSQL ani przeglądarek.
+
+## Dodatkowe regresje przed wdrożeniem
+
+- Właściciel i gość modyfikują niezależne kreski podczas starej rewizji:
+  `change_events.content` musi być identyczne z zatwierdzonym
+  `synced_notebooks.content`, a nie z żądaniem pojedynczego urządzenia.
+- Spreparowana `baseNotebook` musi zwrócić 409, również jeśli klient podaje
+  istniejący UID; serwer sprawdza historyczną rewizję w PostgreSQL.
+- Dwie aktywne sesje tego samego UID są zabronione; skasowanie dokumentu
+  kończy aktywną sesję, a WebSocket gościa odbiera `ended`.
+- Gdy owner kończy udostępnianie, DELETE musi poprzedzać oczekiwanie
+  na lokalny backup/synchronizację.
+- Po odświeżeniu gościa i odcięciu sieci sprawdź utratę ostatnich
+  niepotwierdzonych operacji. Trwały outbox gościa nie jest obecnie wdrożony.
+
+Zmiany obejmują testy regresyjne, ale wykonanie `pytest`, `flutter test`,
+PostgreSQL i testów przeglądarek pozostaje **niepotwierdzone**.
