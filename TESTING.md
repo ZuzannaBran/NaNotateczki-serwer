@@ -59,6 +59,17 @@ równoczesnych zmian tej samej kategorii potwierdź HTTP 409 i zachowanie
 nieprzesłanych ustawień. Przypadki te nie są potwierdzone testem
 na prawdziwym PostgreSQL.
 
+## Realtime na Linuxie, Androidzie i iOS
+
+```bash
+python -m pytest -q api/tests/test_native_realtime.py
+```
+
+Testy kontraktowe potwierdzają: brak nagłówka `Origin` dopuszcza
+przejście do obowiązkowej autoryzacji JWT, niezgodny `Origin` otrzymuje
+4403, a dozwolony origin przeglądarki działa bez zmian.
+Osobno sprawdź prawdziwe WebSocket/WSS na urządzeniu natywnym.
+
 ## Flutter
 
 W repozytorium `NaNotateczki`, gałąź `dev`:
