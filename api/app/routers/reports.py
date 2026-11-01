@@ -106,8 +106,16 @@ def _store_diagnostics(
     path = base / "diagnostics" / str(owner_id) / f"{payload.deviceId}.json"
     current = _read_json(path)
     snapshot = payload.model_dump(mode="json")
+    if not any(
+        snapshot[key] for key in ("errors", "dataIntegrity", "optimization")
+    ):
+        path.unlink(missing_ok=True)
+        return bool(current)
+    report = {key: snapshot[key] for key in (
+        "system", "errors", "dataIntegrity", "optimization"
+    )}
     digest = hashlib.sha256(
-        json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        json.dumps(report, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
     if current.get("contentHash") == digest:
         return False
@@ -117,6 +125,15 @@ def _store_diagnostics(
         "contentHash": digest,
         **snapshot,
     })
+    # Reinstalls receive new device IDs. Keep just one copy of identical logs.
+    for other_path in path.parent.glob("*.json"):
+        if other_path == path:
+            continue
+        other = _read_json(other_path)
+        if other.get("system") == payload.system and other.get(
+            "contentHash"
+        ) == digest:
+            other_path.unlink()
     return True
 
 

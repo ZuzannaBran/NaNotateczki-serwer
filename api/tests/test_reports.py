@@ -41,6 +41,38 @@ def test_diagnostics_overwrites_only_same_account_device(tmp_path):
     assert stored["dataIntegrity"] == ""
 
 
+def test_identical_logs_from_new_device_do_not_accumulate(tmp_path):
+    owner = uuid.uuid4()
+    first_device = uuid.uuid4()
+    initial = DiagnosticsPayload(
+        deviceId=first_device, system="Linux", errors="same stack",
+        dataIntegrity="", optimization="",
+    )
+    assert _store_diagnostics(tmp_path, owner, initial)
+    second_device = uuid.uuid4()
+    assert _store_diagnostics(
+        tmp_path, owner, initial.model_copy(update={"deviceId": second_device})
+    )
+    directory = tmp_path / "diagnostics" / str(owner)
+    assert [file.name for file in directory.glob("*.json")] == [
+        f"{second_device}.json"
+    ]
+
+
+def test_clearing_logs_deletes_old_snapshot(tmp_path):
+    owner = uuid.uuid4()
+    device = uuid.uuid4()
+    initial = DiagnosticsPayload(
+        deviceId=device, system="Web", errors="old",
+        dataIntegrity="", optimization="",
+    )
+    assert _store_diagnostics(tmp_path, owner, initial)
+    cleared = initial.model_copy(update={"errors": ""})
+    assert _store_diagnostics(tmp_path, owner, cleared)
+    directory = tmp_path / "diagnostics" / str(owner)
+    assert not list(directory.glob("*.json"))
+
+
 def test_feedback_and_diagnostics_validation():
     with pytest.raises(ValidationError):
         FeedbackPayload(system="Other", issue="   ")
