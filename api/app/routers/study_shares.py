@@ -297,6 +297,8 @@ async def create_share(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    # Prevent races with owner deletion and concurrent share creation.
+    await lock_owner_events(session, user.id)
     # A session is an overlay on an existing, owner-owned cloud document.
     # It must never become the only persisted copy of a user's work.
     notebook = await session.scalar(
@@ -315,8 +317,7 @@ async def create_share(
         raise HTTPException(
             status_code=422, detail="Only notebooks and boards can be shared."
         )
-    # Serialize creation with owner writes and other concurrent share creation.
-    await lock_owner_events(session, user.id)
+    # Only one conflict clock may govern an active document.
     existing = await session.scalar(
         select(StudyShare)
         .where(
