@@ -24,7 +24,7 @@ Category = Literal[
 
 router = APIRouter(prefix="/v1/account-settings", tags=["account-settings"])
 MAX_SETTING_BYTES = 128 * 1024
-BACKUP_IDLE_SECONDS = {30, 60, 120, 300, 900, 1800}
+BACKUP_IDLE_SECONDS = {15, 30, 60, 120, 300, 900, 1800}
 APP_PREFERENCE_KEYS = {
     "deviceInputMode",
     "accentColor",
