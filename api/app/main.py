@@ -51,6 +51,8 @@ async def security_boundary(request: Request, call_next):
             maximum = settings.maximum_sync_bytes
         elif request.url.path.startswith("/v1/study-shares/") and request.url.path.endswith("/frame"):
             maximum = 2 * 1024 * 1024
+        elif request.url.path == "/v1/account-settings/libraryState":
+            maximum = 3 * 1024 * 1024
         elif request.url.path.startswith("/v1/sync/notebooks/"):
             maximum = settings.maximum_sync_bytes
         elif request.url.path.startswith("/v1/backups/") and request.url.path.endswith(
