@@ -333,3 +333,12 @@ def test_rate_limiter_caps_identity_keys_without_evicting_active_limits() -> Non
     with pytest.raises(HTTPException):
         asyncio.run(limiter.check("ip:first"))
     assert len(limiter._entries) == 2
+
+
+def test_remembered_device_refresh_tokens_last_across_long_inactivity():
+    from app.settings import Settings
+
+    default = Settings.model_fields["refresh_token_days"].default
+    assert default >= 3650
+    # Tokens are still revocable by explicit logout and password change.
+    assert default > 30
