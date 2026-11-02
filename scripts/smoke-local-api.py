@@ -146,6 +146,61 @@ def main() -> None:
         )
         expect(status, 200, "guest joins without account")
         ticket = guest["ticket"]
+
+        # Independent guest strokes from a shared base must reach the owner.
+        status, second_guest = call(
+            "POST", share_path + "/join", {"password": "x"}
+        )
+        expect(status, 200, "second guest joins")
+        status, before_edit = call(
+            "GET", share_path + "/document", token=ticket
+        )
+        expect(status, 200, "guest reads original document")
+        assert before_edit["revision"] == 1
+        assert before_edit["notebook"]["uid"] == uid
+        for guest_ticket, stroke_id in [
+            (ticket, "guest-a"),
+            (second_guest["ticket"], "guest-b"),
+        ]:
+            candidate = json.loads(json.dumps(before_edit["notebook"]))
+            candidate["pages"][0]["inkStrokes"].append({
+                "id": stroke_id, "points": [{"x": 2, "y": 4}]
+            })
+            status, edited = call(
+                "PUT", share_path + "/document", {
+                    "baseRevision": before_edit["revision"],
+                    "baseNotebook": before_edit["notebook"],
+                    "notebook": candidate,
+                }, token=guest_ticket,
+            )
+            expect(status, 200, f"guest merges {stroke_id}")
+        assert edited["revision"] == 3
+        strokes = {
+            stroke["id"]
+            for stroke in edited["notebook"]["pages"][0]["inkStrokes"]
+        }
+        assert strokes == {"guest-a", "guest-b"}, "Guest strokes were lost"
+
+        status, owner_state = call(
+            "GET", "/v1/sync/bootstrap", token=token
+        )
+        expect(status, 200, "owner reads merged guest changes")
+        originals = [
+            entry for entry in owner_state["notebooks"]
+            if entry["uid"] == uid and not entry["deleted"]
+        ]
+        assert len(owner_state["notebooks"]) == 1
+        assert len(originals) == 1 and originals[0]["revision"] == 3
+        assert originals[0]["notebook"]["folder"] == notebook["folder"]
+        status, owner_changes = call(
+            "GET", "/v1/sync/changes?after=0", token=token
+        )
+        expect(status, 200, "owner change feed receives guest edits")
+        assert any(
+            record["uid"] == uid and record["revision"] == 3
+            for record in owner_changes["changes"]
+        ), "Guest edits missing from owner change feed"
+
         expect(call_raw("GET", share_path + "/frame")[0],
                401, "frame without ticket")
         expect(call_raw(
@@ -176,6 +231,9 @@ def main() -> None:
         expect(call_raw(
             "GET", share_path + "/frame", bearer=ticket,
         )[0], 410, "revoked guest can no longer read")
+        expect(call(
+            "GET", share_path + "/document", token=second_guest["ticket"]
+        )[0], 410, "revoked guest cannot read original")
         expect(call(
             "POST", share_path + "/join",
             {"password": "x"},
