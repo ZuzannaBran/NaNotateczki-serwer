@@ -81,6 +81,7 @@ class SyncWrite(BaseModel):
     expectedRevision: int = Field(ge=0)
     notebook: dict[str, Any]
     baseNotebook: dict[str, Any] | None = None
+    restoreDeleted: bool = False
 
     @field_validator("baseNotebook")
     @classmethod
