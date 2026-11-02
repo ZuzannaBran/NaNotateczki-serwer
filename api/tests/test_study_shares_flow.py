@@ -18,12 +18,14 @@ from app.models import ChangeEvent, StudyShare, StudyShareGrant, SyncedNotebook,
 from app.realtime_hub import RealtimeHub
 from app.routers import study_shares as shares
 from app.security import current_user
+from app.settings import get_settings
 
 
 OWNER_ID = uuid.UUID("d1111111-1111-4111-8111-111111111111")
 OTHER_ID = uuid.UUID("d2222222-2222-4222-8222-222222222222")
 NOTE_UID = "study-notebook"
 PASSWORD = "x"
+APP_ORIGIN = str(get_settings().app_origin).rstrip("/")
 
 
 class MemorySession:
@@ -365,6 +367,19 @@ def test_end_revokes_guest_but_preserves_original_document(environment):
     assert join(client, share_id).status_code == 410
 
 
+def test_chunked_delete_without_length_cannot_end_share(environment):
+    client, db, _, _ = environment
+    share_id = create(client).json()["id"]
+    root = f"/v1/study-shares/{share_id}"
+    response = client.request(
+        "DELETE", root, content=b"",
+        headers={"Transfer-Encoding": "chunked"},
+    )
+    assert response.status_code == 411
+    assert db.shares[uuid.UUID(share_id)].revoked_at is None
+    assert client.request("DELETE", root, content=b"").status_code == 204
+
+
 def test_join_rate_limiting(environment):
     client, _, _, _ = environment
     share_id = create(client).json()["id"]
@@ -384,8 +399,27 @@ def test_websocket_requires_exact_origin_and_ticket(environment):
             pass
     assert rejected.value.code == 4403
     with client.websocket_connect(
-        url, headers={"origin": "https://app.example.test"}
+        url, headers={"origin": APP_ORIGIN}
     ) as websocket:
+        websocket.send_json({"type": "authenticate", "ticket": "invalid"})
+        with pytest.raises(WebSocketDisconnect) as rejected:
+            websocket.receive_json()
+        assert rejected.value.code == 4401
+
+
+def test_native_websocket_requires_ticket_without_origin(environment):
+    client, _, _, _ = environment
+    share_id = create(client).json()["id"]
+    ticket = join(client, share_id).json()["ticket"]
+    url = f"/v1/study-shares/{share_id}/events"
+
+    with client.websocket_connect(url) as websocket:
+        websocket.send_json({"type": "authenticate", "ticket": ticket})
+        assert websocket.receive_json() == {
+            "type": "authenticated", "revision": 0,
+        }
+
+    with client.websocket_connect(url) as websocket:
         websocket.send_json({"type": "authenticate", "ticket": "invalid"})
         with pytest.raises(WebSocketDisconnect) as rejected:
             websocket.receive_json()
@@ -398,7 +432,7 @@ def test_websocket_delivers_new_frame_signal(environment):
     ticket = join(client, share_id).json()["ticket"]
     url = f"/v1/study-shares/{share_id}/events"
     with client.websocket_connect(
-        url, headers={"origin": "https://app.example.test"}
+        url, headers={"origin": APP_ORIGIN}
     ) as websocket:
         websocket.send_json({"type": "authenticate", "ticket": ticket})
         assert websocket.receive_json() == {
@@ -420,7 +454,7 @@ def test_websocket_receives_end_event_before_revocation(environment):
     ticket = join(client, share_id).json()["ticket"]
     url = f"/v1/study-shares/{share_id}/events"
     with client.websocket_connect(
-        url, headers={"origin": "https://app.example.test"}
+        url, headers={"origin": APP_ORIGIN}
     ) as websocket:
         websocket.send_json({"type": "authenticate", "ticket": ticket})
         assert websocket.receive_json()["type"] == "authenticated"
@@ -437,10 +471,10 @@ def test_cors_does_not_expose_ticket_to_foreign_browser(environment):
     path = f"/v1/study-shares/{share_id}/frame"
     allowed = client.get(path, headers={
         "Authorization": f"Bearer {ticket}",
-        "Origin": "https://app.example.test",
+        "Origin": APP_ORIGIN,
     })
     assert allowed.headers["access-control-allow-origin"] == (
-        "https://app.example.test"
+        APP_ORIGIN
     )
     blocked = client.get(path, headers={
         "Authorization": f"Bearer {ticket}", "Origin": "https://evil.test",
@@ -454,7 +488,7 @@ def test_two_guests_receive_the_same_revision(environment):
     first_ticket = join(client, share_id).json()["ticket"]
     second_ticket = join(client, share_id).json()["ticket"]
     url = f"/v1/study-shares/{share_id}/events"
-    headers = {"origin": "https://app.example.test"}
+    headers = {"origin": APP_ORIGIN}
     with client.websocket_connect(url, headers=headers) as first:
         first.send_json({"type": "authenticate", "ticket": first_ticket})
         assert first.receive_json()["type"] == "authenticated"
@@ -481,7 +515,7 @@ def test_reconnect_reports_current_revision_and_restores_frame(environment):
     share_id = create(client).json()["id"]
     ticket = join(client, share_id).json()["ticket"]
     url = f"/v1/study-shares/{share_id}/events"
-    headers = {"origin": "https://app.example.test"}
+    headers = {"origin": APP_ORIGIN}
     with client.websocket_connect(url, headers=headers) as websocket:
         websocket.send_json({"type": "authenticate", "ticket": ticket})
         assert websocket.receive_json()["revision"] == 0
@@ -510,7 +544,7 @@ def test_extension_notifies_connected_guests(environment):
     ticket = join(client, share_id).json()["ticket"]
     url = f"/v1/study-shares/{share_id}/events"
     with client.websocket_connect(
-        url, headers={"origin": "https://app.example.test"}
+        url, headers={"origin": APP_ORIGIN}
     ) as websocket:
         websocket.send_json({"type": "authenticate", "ticket": ticket})
         assert websocket.receive_json()["type"] == "authenticated"

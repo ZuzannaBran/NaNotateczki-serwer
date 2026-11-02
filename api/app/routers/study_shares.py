@@ -563,7 +563,9 @@ async def end_share(
 
 @router.websocket("/v1/study-shares/{share_id}/events")
 async def watch_share(websocket: WebSocket, share_id: uuid.UUID) -> None:
-    if websocket.headers.get("origin") != str(get_settings().app_origin).rstrip("/"):
+    origin = websocket.headers.get("origin")
+    # Browsers send Origin; native clients may omit it but still need a ticket.
+    if origin is not None and origin != str(get_settings().app_origin).rstrip("/"):
         await websocket.close(code=4403)
         return
     await websocket.accept()
