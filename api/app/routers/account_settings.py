@@ -19,6 +19,7 @@ Category = Literal[
     "editorPreferences",
     "recentColors",
     "backupPreferences",
+    "libraryState",
 ]
 
 router = APIRouter(prefix="/v1/account-settings", tags=["account-settings"])
@@ -50,6 +51,14 @@ def validate_settings(category: Category, value: object) -> dict | list:
     else:
         if not isinstance(value, dict):
             raise ValueError("Settings must be a JSON object.")
+        if category == "libraryState" and (
+            not isinstance(value.get("folders"), list)
+            or not all(isinstance(folder, str) for folder in value["folders"])
+            or not isinstance(value.get("covers"), dict)
+            or not isinstance(value.get("plannerTasks"), dict)
+            or not isinstance(value.get("recentCoverColors"), list)
+        ):
+            raise ValueError("Invalid account library state.")
         if category == "appPreferences" and (
             not set(value).issubset(APP_PREFERENCE_KEYS)
             or any(not isinstance(key, str) for key in value)
@@ -73,7 +82,8 @@ def validate_settings(category: Category, value: object) -> dict | list:
         ).encode()
     except (TypeError, ValueError) as error:
         raise ValueError("Settings are not valid JSON.") from error
-    if len(encoded) > MAX_SETTING_BYTES:
+    limit = 2 * 1024 * 1024 if category == "libraryState" else MAX_SETTING_BYTES
+    if len(encoded) > limit:
         raise ValueError("Settings exceed the size limit.")
     return value
 
