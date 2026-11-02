@@ -514,7 +514,7 @@ def test_cors_does_not_expose_ticket_to_foreign_browser(environment):
 def test_host_appearance_updates_without_changing_document_revision(
     environment,
 ):
-    client, db, _, _ = environment
+    client, db, principal, _ = environment
     share_id = create(client).json()["id"]
     ticket = join(client, share_id).json()["ticket"]
     root = f"/v1/study-shares/{share_id}"
@@ -539,9 +539,10 @@ def test_host_appearance_updates_without_changing_document_revision(
         {**appearance, "darkMode": "invalid"},
     ]:
         assert client.put(root + "/appearance", json=invalid).status_code == 422
-    assert client.put(
-        root + "/appearance", json=appearance, headers=headers
-    ).status_code in (401, 403)
+    principal["user"] = User(
+        id=OTHER_ID, username="other", password_hash="unused"
+    )
+    assert client.put(root + "/appearance", json=appearance).status_code == 404
 
 
 def test_two_guests_receive_the_same_revision(environment):
