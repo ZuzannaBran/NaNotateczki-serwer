@@ -129,3 +129,24 @@ def test_invalid_timestamp_and_cross_id_are_rejected(environment):
         "modifiedAt": datetime.now(UTC).isoformat(), "deleted": False,
         "entry": value("other", "Title"),
     }).status_code == 422
+
+
+def test_paginated_bootstrap_includes_all_entries(environment):
+    client, db, principal = environment
+    for index in range(215):
+        uid = f"item-{index:04}"
+        db.add(PlannerEntry(
+            owner_id=principal["user"].id,
+            uid=uid,
+            content=value(uid, "Event"),
+            modified_at=datetime.now(UTC),
+            deleted=False,
+        ))
+    first = client.get("/v1/planner/entries").json()
+    assert len(first["entries"]) == 200
+    assert first["next"] == "item-0199"
+    second = client.get(
+        "/v1/planner/entries", params={"after": first["next"]}
+    ).json()
+    assert len(second["entries"]) == 15
+    assert second["next"] is None
