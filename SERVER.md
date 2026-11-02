@@ -155,3 +155,10 @@ backupu. Usuwane są jedynie udostępnione klatki PNG i dostęp gości.
 Klient powinien opróżnić lokalną kolejkę zapisu i wykonać `syncNow()`
 przed utworzeniem oraz zakończeniem sesji; gdy są błędy lub oczekujące
 zmiany, nie może pokazać powodzenia zapisu na koncie.
+
+A shared session's host publishes its current dark/light mode and editor
+background style/spacing through authenticated `PUT /v1/study-shares/{id}/appearance`.
+Guest `GET /document` returns this state, and an `appearance_changed` WebSocket
+event requests a refresh without changing document revisions or creating a
+new notebook. The validated appearance is stored in the existing
+`study_shares.edit_clock` JSON under `_appearance`; no SQL migration is needed.

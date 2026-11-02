@@ -55,6 +55,18 @@ class ShareDocumentWrite(BaseModel):
         return value
 
 
+class ShareAppearanceWrite(BaseModel):
+    darkMode: bool
+    backgroundStyle: int = Field(ge=0, le=2)
+    backgroundSpacing: float = Field(ge=16, le=64)
+
+
+def share_appearance(share: StudyShare) -> dict | None:
+    clock = share.edit_clock or {}
+    value = clock.get("_appearance")
+    return value if isinstance(value, dict) else None
+
+
 def _items_by_id(items: list[dict]) -> dict[str, dict]:
     result = {}
     for item in items:
@@ -367,6 +379,26 @@ async def active_shares(
     } for share in rows]}
 
 
+@router.put("/v1/study-shares/{share_id}/appearance")
+async def update_share_appearance(
+    share_id: uuid.UUID,
+    body: ShareAppearanceWrite,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    # Serialized with guest edits by the same row lock; never changes the
+    # document revision or its conflict clock.
+    share = await owner_share(share_id, user, session, lock=True)
+    ensure_active(share)
+    appearance = body.model_dump()
+    if share_appearance(share) == appearance:
+        return {"appearance": appearance}
+    share.edit_clock = {**(share.edit_clock or {}), "_appearance": appearance}
+    await session.commit()
+    await hub.publish(share_id, {"type": "appearance_changed"})
+    return {"appearance": appearance}
+
+
 @router.get("/v1/study-shares/{share_id}/document")
 async def read_shared_document(
     share_id: uuid.UUID,
@@ -384,6 +416,7 @@ async def read_shared_document(
     if notebook is None or not isinstance(notebook.content, dict):
         raise HTTPException(status_code=410, detail="The shared document is unavailable.")
     return {"notebook": notebook.content, "revision": notebook.revision,
+            "appearance": share_appearance(share),
             "expiresAt": share.expires_at.isoformat()}
 
 
@@ -427,7 +460,8 @@ async def edit_shared_document(
         clock, received_at,
     )
     if changed == notebook.content:
-        return {"notebook": notebook.content, "revision": notebook.revision}
+        return {"notebook": notebook.content, "revision": notebook.revision,
+                "appearance": share_appearance(share)}
     share.edit_clock = clock
     notebook.revision += 1
     notebook.content = changed
@@ -443,7 +477,8 @@ async def edit_shared_document(
                       {"type": "notebook_changed", "cursor": event.id})
     await hub.publish(share_id,
                       {"type": "document_changed", "revision": notebook.revision})
-    return {"notebook": changed, "revision": notebook.revision}
+    return {"notebook": changed, "revision": notebook.revision,
+            "appearance": share_appearance(share)}
 
 
 @router.post("/v1/study-shares/{share_id}/join")

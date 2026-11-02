@@ -511,6 +511,39 @@ def test_cors_does_not_expose_ticket_to_foreign_browser(environment):
     assert "access-control-allow-origin" not in blocked.headers
 
 
+def test_host_appearance_updates_without_changing_document_revision(
+    environment,
+):
+    client, db, _, _ = environment
+    share_id = create(client).json()["id"]
+    ticket = join(client, share_id).json()["ticket"]
+    root = f"/v1/study-shares/{share_id}"
+    headers = {"Authorization": f"Bearer {ticket}"}
+    original = client.get(root + "/document", headers=headers)
+    assert original.status_code == 200
+    initial_revision = original.json()["revision"]
+    appearance = {
+        "darkMode": True,
+        "backgroundStyle": 2,
+        "backgroundSpacing": 24.0,
+    }
+    assert client.put(root + "/appearance", json=appearance).status_code == 200
+    received = client.get(root + "/document", headers=headers)
+    assert received.status_code == 200
+    assert received.json()["appearance"] == appearance
+    assert received.json()["revision"] == initial_revision
+    assert client.put(root + "/appearance", json=appearance).status_code == 200
+    for invalid in [
+        {**appearance, "backgroundStyle": 4},
+        {**appearance, "backgroundSpacing": 2},
+        {**appearance, "darkMode": "invalid"},
+    ]:
+        assert client.put(root + "/appearance", json=invalid).status_code == 422
+    assert client.put(
+        root + "/appearance", json=appearance, headers=headers
+    ).status_code in (401, 403)
+
+
 def test_two_guests_receive_the_same_revision(environment):
     client, _, _, _ = environment
     share_id = create(client).json()["id"]
