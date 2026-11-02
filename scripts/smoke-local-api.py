@@ -83,7 +83,7 @@ def main() -> None:
 
         status, bootstrap = call("GET", "/v1/sync/bootstrap", token=token)
         expect(status, 200, "sync bootstrap")
-        assert bootstrap == {"cursor": 0, "notebooks": []}
+        assert bootstrap == {"cursor": 0, "notebooks": [], "next": None}
 
         uid = str(uuid.uuid4())
         notebook = {
