@@ -17,6 +17,27 @@ from ..settings import get_settings
 
 router = APIRouter(prefix="/v1/sync", tags=["sync"])
 
+# Bound each database read and response. One large document may exceed
+# the soft byte limit; the client accepts a 32 MiB single-document page.
+SYNC_PAGE_LIMIT = 5
+SYNC_PAGE_BYTES = 8 * 1024 * 1024
+
+
+def bounded_page(records: list, serialize) -> tuple[list[dict], bool]:
+    selected = []
+    byte_count = 0
+    for record in records:
+        item = serialize(record)
+        size = len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode())
+        if selected and (
+            len(selected) >= SYNC_PAGE_LIMIT
+            or byte_count + size > SYNC_PAGE_BYTES
+        ):
+            break
+        selected.append(item)
+        byte_count += size
+    return selected, len(records) > len(selected)
+
 
 async def lock_owner_events(session: AsyncSession, owner_id: uuid.UUID) -> None:
     # PostgreSQL sequences are assigned before commit. Serializing writes for
@@ -75,10 +96,10 @@ async def conflict(record: SyncedNotebook | None, uid: str) -> None:
 async def bootstrap(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
+    after: str = Query(default="", max_length=128),
 ) -> dict:
-    # Read the cursor first. A concurrent write may then appear both in the
-    # snapshot and changes feed, which is harmless because revisions dedupe it.
-    # Reading it second could permanently skip a write absent from the snapshot.
+    # Capture cursor before the first page; concurrent writes are replayed
+    # via /changes after bootstrap, including earlier alphabetical UIDs.
     cursor = await session.scalar(
         select(func.coalesce(func.max(ChangeEvent.id), 0)).where(
             ChangeEvent.owner_id == user.id
@@ -86,12 +107,15 @@ async def bootstrap(
     )
     records = await session.execute(
         select(SyncedNotebook)
-        .where(SyncedNotebook.owner_id == user.id)
+        .where(SyncedNotebook.owner_id == user.id, SyncedNotebook.uid > after)
         .order_by(SyncedNotebook.uid)
+        .limit(SYNC_PAGE_LIMIT + 1)
     )
+    page, has_more = bounded_page(list(records.scalars()), record_json)
     return {
         "cursor": int(cursor or 0),
-        "notebooks": [record_json(item) for item in records.scalars()],
+        "notebooks": page,
+        "next": page[-1]["uid"] if has_more else None,
     }
 
 
@@ -105,11 +129,12 @@ async def changes(
         select(ChangeEvent)
         .where(ChangeEvent.owner_id == user.id, ChangeEvent.id > after)
         .order_by(ChangeEvent.id)
-        .limit(500)
+        .limit(SYNC_PAGE_LIMIT + 1)
     )
     events = list(result.scalars())
-    cursor = events[-1].id if events else after
-    return {"cursor": cursor, "changes": [event_json(item) for item in events]}
+    page, has_more = bounded_page(events, event_json)
+    cursor = events[len(page) - 1].id if page else after
+    return {"cursor": cursor, "changes": page, "hasMore": has_more}
 
 
 @router.put("/notebooks/{uid}")
