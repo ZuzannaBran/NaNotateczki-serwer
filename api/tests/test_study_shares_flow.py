@@ -426,6 +426,35 @@ def test_native_websocket_requires_ticket_without_origin(environment):
         assert rejected.value.code == 4401
 
 
+def test_guest_subscribes_before_authorization_to_catch_revocation(
+    environment, monkeypatch,
+):
+    client, _, _, _ = environment
+    share_id = create(client).json()["id"]
+    ticket = join(client, share_id).json()["ticket"]
+    order = []
+    original_subscribe = shares.hub.subscribe
+    original_authorize = shares.guest_share
+
+    async def subscribe(*args, **kwargs):
+        order.append("subscribe")
+        return await original_subscribe(*args, **kwargs)
+
+    async def authorize(*args, **kwargs):
+        order.append("authorize")
+        return await original_authorize(*args, **kwargs)
+
+    monkeypatch.setattr(shares.hub, "subscribe", subscribe)
+    monkeypatch.setattr(shares, "guest_share", authorize)
+    with client.websocket_connect(
+        f"/v1/study-shares/{share_id}/events",
+        headers={"origin": APP_ORIGIN},
+    ) as websocket:
+        websocket.send_json({"type": "authenticate", "ticket": ticket})
+        assert websocket.receive_json()["type"] == "authenticated"
+        assert order[:2] == ["subscribe", "authorize"]
+
+
 def test_websocket_delivers_new_frame_signal(environment):
     client, _, _, _ = environment
     share_id = create(client).json()["id"]
