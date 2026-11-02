@@ -328,11 +328,28 @@ def main() -> None:
                 text=True,
             )
             if backup_id is not None:
-                owner_dir = project_root / "data" / "backups" / user_id
-                (owner_dir / f"{backup_id}.json").unlink(missing_ok=True)
-                (owner_dir / f"{backup_id}.upload").unlink(missing_ok=True)
-                if owner_dir.exists():
-                    owner_dir.rmdir()
+                # Backup files are owned by the API container UID, not by
+                # the host CI runner. Clean them as the same unprivileged UID.
+                subprocess.run(
+                    [
+                        "docker", "compose", "exec", "-T", "api", "python", "-c",
+                        (
+                            "from pathlib import Path\n"
+                            "import sys\n"
+                            "owner_dir = Path('/data/backups') / sys.argv[1]\n"
+                            "for suffix in ('.json', '.upload'):\n"
+                            "    (owner_dir / (sys.argv[2] + suffix)).unlink("
+                            "missing_ok=True)\n"
+                            "if owner_dir.is_dir() and not any(owner_dir.iterdir()):\n"
+                            "    owner_dir.rmdir()\n"
+                        ),
+                        user_id, backup_id,
+                    ],
+                    cwd=project_root,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
 
 
 if __name__ == "__main__":
