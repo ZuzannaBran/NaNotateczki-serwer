@@ -579,9 +579,12 @@ async def watch_share(websocket: WebSocket, share_id: uuid.UUID) -> None:
         if not isinstance(ticket, str):
             await websocket.close(code=4401)
             return
+        # Subscribe before authorizing. A revocation between authorization
+        # and subscription would otherwise lose the "ended" event, leaving
+        # the guest connected until the next periodic permission check.
+        queue = await hub.subscribe(share_id)
         async with session_factory() as session:
             share = await guest_share(share_id, ticket, session)
-        queue = await hub.subscribe(share_id)
         await websocket.send_json({"type": "authenticated", "revision": share.revision})
         while True:
             try:
