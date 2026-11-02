@@ -556,7 +556,12 @@ async def end_share(
     share = await owner_share(share_id, user, session, lock=True)
     share.revoked_at = datetime.now(UTC)
     await session.commit()
-    frame_path(share_id).unlink(missing_ok=True)
+    try:
+        frame_path(share_id).unlink(missing_ok=True)
+    except OSError:
+        # Authorization is revoked in PostgreSQL even if a private PNG
+        # cannot be removed; still notify connected guests immediately.
+        pass
     await hub.publish(share_id, {"type": "ended"})
     return Response(status_code=204)
 
