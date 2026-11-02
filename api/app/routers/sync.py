@@ -160,7 +160,8 @@ async def put_notebook(
         )
         session.add(record)
     else:
-        if active_share is not None and record.deleted_at is not None:
+        # A tombstone is final for this UID. Restores require a new UID.
+        if record.deleted_at is not None:
             await conflict(record, uid)
         if active_share is not None and body.baseNotebook is not None:
             from .study_shares import merge_share_document, require_verified_base
