@@ -42,6 +42,9 @@ def test_rejects_unknown_and_invalid_settings():
         api.validate_settings("recentColors", [-1])
     with pytest.raises(ValueError):
         api.validate_settings("recentColors", [0] * 13)
+    assert api.validate_settings("backupPreferences", {
+        "version": 1, "idleSeconds": 60
+    })["idleSeconds"] == 60
     with pytest.raises(ValueError):
         api.validate_settings("backupPreferences", {
             "version": 1, "idleSeconds": 1
