@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     allow_registration: bool = Field(default=False, alias="ALLOW_REGISTRATION")
     data_path: Path = Field(default=Path("/data"), alias="DATA_PATH")
     access_token_minutes: int = 10
-    refresh_token_days: int = 30
+    # Remember this installation across long breaks; explicit sign-out,
+    # password changes and server-side revocation still invalidate tokens.
+    refresh_token_days: int = Field(default=3650, ge=1)
     issuer: str = "nanotateczki-api"
     maximum_backup_bytes: int = Field(
         default=64 * 1024 * 1024, alias="MAXIMUM_BACKUP_BYTES"
