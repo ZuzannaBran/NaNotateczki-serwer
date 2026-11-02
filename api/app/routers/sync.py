@@ -168,11 +168,7 @@ async def put_notebook(
                 await conflict(record, uid)
             if active_share is not None:
                 await conflict(record, uid)
-        if record.deleted_at is not None:
-            # The prior owner/share session was revoked on delete.
-            # Restore is a new authorized write, never a backup replay.
-            pass
-        elif active_share is not None and body.baseNotebook is not None:
+        if record.deleted_at is None and active_share is not None and body.baseNotebook is not None:
             from .study_shares import merge_share_document, require_verified_base
 
             if body.baseNotebook.get("uid") != uid:
@@ -186,7 +182,7 @@ async def put_notebook(
                 clock, received_at,
             )
             active_share.edit_clock = clock
-        elif record.revision != body.expectedRevision:
+        elif record.deleted_at is None and record.revision != body.expectedRevision:
             await conflict(record, uid)
         record.revision += 1
         record.content = merged_notebook
