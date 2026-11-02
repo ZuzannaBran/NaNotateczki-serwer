@@ -48,7 +48,8 @@ wariant włącza rejestrację tylko dla API dostępnego przez port loopback.
 
 Przed uruchomieniem nowej wersji API wykonaj wszystkie migracje, w tym
 `0002_auth_version.sql`, `0003_username.sql` i
-`0007_account_settings.sql`. Migracja nadaje istniejącym
+`0007_account_settings.sql`, `0008_planner_entries.sql`
+i `0009_account_settings_library_state.sql`. Migracje nadają istniejącym
 kontom login z unikalnej części e-maila lub identyfikatora konta. Rejestracja i nowe hasło przy zmianie wymagają 8–128
 znaków; logowanie nadal akceptuje istniejące hasła 1–256 znaków. Endpoint
 `POST /v1/auth/change-password` wymaga tokenu Bearer oraz JSON z
@@ -69,7 +70,11 @@ zachowując nagłówek Host. Aplikację Web buduj z
 
 ## Backup
 
-Po zalogowaniu klient może uruchomić `RemoteBackupScheduler`. Wysyła
+Po zalogowaniu klient może uruchomić `RemoteBackupScheduler`.
+Domyślny okres odnawialnej sesji urządzenia to 3650 dni (rotacja tokenów).
+Zmiana hasła, ręczne wylogowanie i unieważnienie sesji nadal odbierają dostęp.
+Lista zweryfikowanych backupów jest porządkowana po `verified_at`, aby
+opóźniona finalizacja starszego uploadu była prawidłowo uwzględniana. Wysyła
 zweryfikowany snapshot po zmianach, ponawia błędy i normalnie zapisuje po ustawionym czasie bezczynności. Pliki są prywatne w `data/backups/<user-id>/`; serwer potwierdza rozmiar,
 SHA-256 i strukturę przed oznaczeniem ich jako poprawnych.
 
