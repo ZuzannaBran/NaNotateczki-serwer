@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from .database import engine
-from .routers import account_settings, auth, backups, realtime, reports, study_shares, sync
+from .routers import account_settings, auth, backups, planner, realtime, reports, study_shares, sync
 from .settings import get_settings
 
 
@@ -41,6 +41,8 @@ async def security_boundary(request: Request, call_next):
         return JSONResponse(status_code=400, content={"detail": "Invalid request ID."})
     if request.method in {"POST", "PUT", "DELETE"}:
         length = request.headers.get("content-length")
+        if length is None and request.method == "DELETE" and not request.headers.get("transfer-encoding"):
+            length = "0"
         if length is None or not length.isdigit():
             return JSONResponse(
                 status_code=411, content={"detail": "Content-Length is required."}
@@ -80,6 +82,7 @@ async def ready() -> dict:
 
 app.include_router(auth.router)
 app.include_router(account_settings.router)
+app.include_router(planner.router)
 app.include_router(backups.router)
 app.include_router(sync.router)
 app.include_router(realtime.router)

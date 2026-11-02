@@ -166,3 +166,20 @@ class StudyShareGrant(Base):
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlannerEntry(Base):
+    """Account-owned calendar entry or durable deletion tombstone."""
+
+    __tablename__ = "planner_entries"
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    uid: Mapped[str] = mapped_column(String(128), primary_key=True)
+    content: Mapped[dict | None] = mapped_column(JSONB)
+    modified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted: Mapped[bool] = mapped_column(nullable=False, default=False)

@@ -1,0 +1,131 @@
+"""Planner sync contract: per-entry LWW, tombstones and account isolation."""
+
+import uuid
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.database import database_session
+from app.main import app
+from app.models import PlannerEntry, User
+from app.routers import planner
+from app.security import current_user
+
+
+class MemorySession:
+    def __init__(self):
+        self.records = {}
+        self.commits = 0
+
+    async def get(self, model, key):
+        assert model is PlannerEntry
+        return self.records.get(key)
+
+    async def execute(self, statement, parameters=None):
+        if parameters:
+            return None
+        params = statement.compile().params
+        owner = next(x for x in params.values() if isinstance(x, uuid.UUID))
+        after = next((x for x in params.values() if isinstance(x, str)), "")
+        rows = sorted(
+            (r for (user, uid), r in self.records.items()
+             if user == owner and uid > after),
+            key=lambda r: r.uid,
+        )
+        return SimpleNamespace(scalars=lambda: iter(rows[:201]))
+
+    def add(self, record):
+        self.records[(record.owner_id, record.uid)] = record
+
+    async def commit(self):
+        self.commits += 1
+
+
+@pytest.fixture
+def environment(monkeypatch):
+    db = MemorySession()
+    owner = User(
+        id=uuid.UUID("d1111111-1111-4111-8111-111111111111"),
+        username="owner", password_hash="unused",
+    )
+    principal = {"user": owner}
+    app.dependency_overrides[database_session] = lambda: db
+    app.dependency_overrides[current_user] = lambda: principal["user"]
+
+    async def lock(*args):
+        return None
+
+    async def publish(*args):
+        return None
+
+    monkeypatch.setattr(planner, "lock_owner_events", lock)
+    monkeypatch.setattr(planner.hub, "publish", publish)
+    try:
+        with TestClient(app) as client:
+            yield client, db, principal
+    finally:
+        app.dependency_overrides.clear()
+
+
+def value(uid, title):
+    return {
+        "id": uid, "kind": "event", "title": title,
+        "scheduledAt": "2026-11-02T12:00:00Z", "minutes": 30,
+    }
+
+
+def write(client, uid, stamp, title=None):
+    return client.put(f"/v1/planner/entries/{uid}", json={
+        "modifiedAt": stamp.isoformat(), "deleted": title is None,
+        "entry": None if title is None else value(uid, title),
+    })
+
+
+def test_later_edit_wins_and_old_retry_cannot_overwrite(environment):
+    client, db, _ = environment
+    base = datetime.now(UTC) - timedelta(hours=1)
+    assert write(client, "e1", base, "Original").status_code == 200
+    assert write(client, "e1", base + timedelta(seconds=2), "Later").json()[
+        "entry"
+    ]["title"] == "Later"
+    result = write(client, "e1", base + timedelta(seconds=1), "Stale")
+    assert result.json()["entry"]["title"] == "Later"
+    assert db.commits == 2
+
+
+def test_delete_is_tombstone_and_old_offline_edit_cannot_resurrect(environment):
+    client, _, _ = environment
+    base = datetime.now(UTC) - timedelta(hours=1)
+    write(client, "e1", base, "Original")
+    assert write(client, "e1", base + timedelta(seconds=2)).json()["deleted"]
+    assert write(client, "e1", base + timedelta(seconds=1), "Old").json()["deleted"]
+    result = client.get("/v1/planner/entries").json()
+    assert result["entries"][0]["deleted"] is True
+
+
+def test_accounts_have_independent_entries(environment):
+    client, _, principal = environment
+    stamp = datetime.now(UTC)
+    write(client, "entry", stamp, "Owner")
+    principal["user"] = User(
+        id=uuid.uuid4(), username="second", password_hash="unused"
+    )
+    assert client.get("/v1/planner/entries").json()["entries"] == []
+    write(client, "entry", stamp, "Second")
+    assert client.get("/v1/planner/entries").json()["entries"][0][
+        "entry"
+    ]["title"] == "Second"
+
+
+def test_invalid_timestamp_and_cross_id_are_rejected(environment):
+    client, _, _ = environment
+    assert client.put("/v1/planner/entries/e", json={
+        "modifiedAt": "2026-11-02T12:00:00", "deleted": False,
+        "entry": value("e", "Title"),
+    }).status_code == 422
+    assert client.put("/v1/planner/entries/e", json={
+        "modifiedAt": datetime.now(UTC).isoformat(), "deleted": False,
+        "entry": value("other", "Title"),
+    }).status_code == 422

@@ -165,3 +165,17 @@ Nie wystawiaj portów PostgreSQL ani API na routerze. Test E2E
 w dwóch prawdziwych przeglądarkach jest wymagany przed produkcją:
 rysowanie jednoczesne, edycja tego samego pola, restart hosta,
 przedłużenie, wygaśnięcie i odcięcie gościa.
+
+
+## Synchronizacja kalendarza (migracja 0008)
+
+Wykonaj `scripts/apply-migrations.sh` przed restartem API. Endpoints
+`GET /v1/planner/entries?after=<uid>` (strony po 200) i
+`PUT /v1/planner/entries/<uid>` wymagają tokenu właściciela.
+Zapis jest atomowy, obejmuje osobne wydarzenia i Study Sessions oraz
+trwałe tombstones po usunięciu. `modifiedAt` z lokalnego zegara UTC
+rozstrzyga późniejsze edycje tego samego wpisu; serwer odrzuca starszą
+wersję. Po commicie publikuje `planner_changed` przez WebSocket.
+Po utracie połączenia klient pobiera ponownie pełne strony i uzgadnia
+stan, zachowując zmiany offline. Poprawność kolejności między offline
+urządzeniami zależy od ich zsynchronizowanych zegarów.

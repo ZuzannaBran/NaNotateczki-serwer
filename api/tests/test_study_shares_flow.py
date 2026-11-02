@@ -258,9 +258,19 @@ def test_password_ticket_and_private_frame(environment):
 
 
 def test_ticket_cannot_open_another_share(environment):
-    client, _, _, _ = environment
+    client, db, _, _ = environment
     first = create(client).json()["id"]
-    second = create(client).json()["id"]
+    db.notebooks.append(SyncedNotebook(
+        id=uuid.uuid4(), owner_id=OWNER_ID, uid="other-notebook",
+        content={"uid": "other-notebook", "kind": 0, "title": "Other"},
+        revision=1, deleted_at=None,
+    ))
+    second_response = client.post("/v1/study-shares", json={
+        "documentUid": "other-notebook", "title": "Other",
+        "password": PASSWORD,
+    })
+    assert second_response.status_code == 201
+    second = second_response.json()["id"]
     ticket = join(client, first).json()["ticket"]
     response = client.get(f"/v1/study-shares/{second}/frame", headers={
         "Authorization": f"Bearer {ticket}",
