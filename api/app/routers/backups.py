@@ -21,6 +21,9 @@ from ..settings import get_settings
 
 router = APIRouter(prefix="/v1/backups", tags=["backups"])
 logger = logging.getLogger(__name__)
+# One worker has a 700 MiB memory limit. Validate large JSON snapshots
+# serially to avoid simultaneous 64 MiB deserializations exhausting memory.
+_finalize_lock = asyncio.Lock()
 
 
 def backup_root() -> Path:
@@ -136,6 +139,13 @@ async def finalize_backup(
     backup_id: uuid.UUID,
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
+) -> dict:
+    async with _finalize_lock:
+        return await _finalize_backup(backup_id, user, session)
+
+
+async def _finalize_backup(
+    backup_id: uuid.UUID, user: User, session: AsyncSession,
 ) -> dict:
     backup = await owned_backup(backup_id, user.id, session, lock=True)
     if backup.status != "pending":
