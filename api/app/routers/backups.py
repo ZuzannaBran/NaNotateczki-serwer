@@ -309,7 +309,7 @@ async def list_backups(
     result = await session.execute(
         select(DeviceBackup)
         .where(DeviceBackup.owner_id == user.id, DeviceBackup.status == "verified")
-        .order_by(desc(DeviceBackup.created_at))
+        .order_by(desc(DeviceBackup.verified_at), desc(DeviceBackup.created_at))
         .limit(100)
     )
     return {
