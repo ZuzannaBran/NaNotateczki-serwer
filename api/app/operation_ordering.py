@@ -23,12 +23,45 @@ def precedence(operation: OperationEnvelope) -> tuple[int, str, int, str]:
     )
 
 
+@dataclass(frozen=True)
+class OperationCheckpoint:
+    """Lossless stage-2 checkpoint. No unsafe history compaction yet."""
+
+    operations: tuple[OperationEnvelope, ...]
+    schema_version: int = 1
+
+    def to_dict(self) -> dict:
+        return {
+            "schemaVersion": self.schema_version,
+            "operations": [operation.to_dict() for operation in self.operations],
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "OperationCheckpoint":
+        if (
+            not isinstance(raw, dict)
+            or type(raw.get("schemaVersion")) is not int
+            or raw["schemaVersion"] != 1
+            or not isinstance(raw.get("operations"), list)
+        ):
+            raise ValueError("Invalid operation checkpoint.")
+        from .operation_protocol import InvalidOperation
+
+        try:
+            operations = tuple(
+                OperationEnvelope.from_dict(item) for item in raw["operations"]
+            )
+        except (InvalidOperation, TypeError) as exc:
+            raise ValueError("Invalid checkpoint operation.") from exc
+        return cls(operations)
+
+
 @dataclass
 class CausalOperationBuffer:
-    """Hold packets until every dependency and actor predecessor is known.
+    """Lossless, transactional-in-memory causal ordering.
 
-    Checkpoint actor sequences and known IDs must be committed together.
-    Server persistence/authorization is introduced only in stage 4.
+    Stage 3 must atomically persist the returned operations and checkpoint
+    before acknowledging them. Compaction requires a durable ID lookup.
     """
 
     actor_sequences: dict[str, int] = field(default_factory=dict)
@@ -40,104 +73,160 @@ class CausalOperationBuffer:
     latest_actor_operation: dict[str, OperationEnvelope] = field(
         default_factory=dict
     )
+    rejected: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.actor_sequences = dict(self.actor_sequences)
-        self.known_ids = set(self.known_ids)
-        if self.maximum_pending < 1 or any(
-            value < 0 for value in self.actor_sequences.values()
-        ):
-            raise ValueError("Invalid checkpoint.")
+        # A bare sequence frontier cannot verify predecessor IDs, clocks
+        # or retransmitted payloads. Only restore lossless checkpoints.
+        if self.actor_sequences or self.known_ids:
+            raise ValueError("Restore a complete OperationCheckpoint instead.")
+        if self.maximum_pending < 1:
+            raise ValueError("Invalid queue capacity.")
+
+    def export_checkpoint(self) -> OperationCheckpoint:
+        if self.pending:
+            # Pending changes must live in the durable outbox, not a snapshot.
+            raise OperationOrderError("Pending operations cannot be checkpointed.")
+        return OperationCheckpoint(
+            tuple(sorted(self.accepted.values(), key=precedence))
+        )
+
+    @classmethod
+    def from_checkpoint(
+        cls, checkpoint: OperationCheckpoint, *, maximum_pending: int = 10000
+    ) -> "CausalOperationBuffer":
+        if checkpoint.schema_version != 1:
+            raise ValueError("Unsupported checkpoint schema.")
+        queue = cls(maximum_pending=maximum_pending)
+        for operation in sorted(checkpoint.operations, key=precedence):
+            queue.ingest(operation)
+        if queue.pending or len(queue.accepted) != len(checkpoint.operations):
+            raise ValueError("Incomplete or inconsistent causal checkpoint.")
+        return queue
 
     def missing_dependencies(self, operation: OperationEnvelope) -> list[str]:
         return [
-            item for item in operation.dependencies
-            if item not in self.known_ids
+            item for item in operation.dependencies if item not in self.known_ids
         ]
 
-    def ingest(self, operation: OperationEnvelope) -> list[OperationEnvelope]:
-        known = self.pending.get(operation.operation_id) or self.accepted.get(
-            operation.operation_id
-        )
-        if known is not None:
-            if known.to_dict() != operation.to_dict():
-                raise OperationOrderError("Operation ID was reused.")
-            return []
-        if operation.operation_id in self.known_ids:
-            return []
-        if operation.actor_seq <= self.actor_sequences.get(
-            operation.actor_id, 0
-        ):
-            raise OperationOrderError("Sequence precedes checkpoint.")
-        actor_keys = self.sequence_ids.setdefault(operation.actor_id, {})
-        old_id = actor_keys.get(operation.actor_seq)
-        if old_id is not None and old_id != operation.operation_id:
-            raise OperationOrderError("Actor sequence was forked.")
-        if len(self.pending) >= self.maximum_pending:
-            raise OperationOrderError("Causal queue is full.")
-        actor_keys[operation.actor_seq] = operation.operation_id
-        self.pending[operation.operation_id] = operation
-        if self._has_cycle(operation.operation_id, set(), set()):
-            del self.pending[operation.operation_id]
-            del actor_keys[operation.actor_seq]
-            raise OperationOrderError("Causal dependency cycle.")
-        return self._drain()
-
+    @staticmethod
     def _has_cycle(
-        self, operation_id: str, visiting: set[str], finished: set[str]
+        pending: dict[str, OperationEnvelope], operation_id: str,
+        visiting: set[str], finished: set[str],
     ) -> bool:
         if operation_id in visiting:
             return True
         if operation_id in finished:
             return False
-        finished.add(operation_id)
         visiting.add(operation_id)
-        operation = self.pending.get(operation_id)
-        if operation:
-            for parent_id in operation.dependencies:
-                if parent_id in self.pending and self._has_cycle(
-                    parent_id, visiting, finished
+        item = pending.get(operation_id)
+        if item is not None:
+            for parent in item.dependencies:
+                if parent in pending and CausalOperationBuffer._has_cycle(
+                    pending, parent, visiting, finished
                 ):
                     return True
         visiting.remove(operation_id)
+        finished.add(operation_id)
         return False
 
-    def _drain(self) -> list[OperationEnvelope]:
+    def ingest(self, operation: OperationEnvelope) -> list[OperationEnvelope]:
+        existing = self.pending.get(operation.operation_id) or self.accepted.get(
+            operation.operation_id
+        )
+        if existing is not None:
+            if existing.to_dict() != operation.to_dict():
+                raise OperationOrderError("Operation ID was reused.")
+            return []
+        if operation.operation_id in self.rejected:
+            raise OperationOrderError("Previously rejected operation ID.")
+        if operation.operation_id in self.known_ids:
+            # This should be unreachable for a complete checkpoint.
+            raise OperationOrderError("Missing known operation payload.")
+        if operation.actor_seq <= self.actor_sequences.get(operation.actor_id, 0):
+            raise OperationOrderError("Sequence precedes checkpoint.")
+        used = self.sequence_ids.get(operation.actor_id, {}).get(
+            operation.actor_seq
+        )
+        if used is not None:
+            raise OperationOrderError("Actor sequence was forked.")
+        if len(self.pending) >= self.maximum_pending:
+            raise OperationOrderError("Causal queue is full.")
+
+        # Copy-on-write: no accepted operation is lost from the return value
+        # when an invalid dependent is encountered later in this drain.
+        pending = dict(self.pending)
+        accepted = dict(self.accepted)
+        known_ids = set(self.known_ids)
+        actor_sequences = dict(self.actor_sequences)
+        sequence_ids = {
+            actor: dict(items) for actor, items in self.sequence_ids.items()
+        }
+        latest = dict(self.latest_actor_operation)
+        rejected = dict(self.rejected)
+        sequence_ids.setdefault(operation.actor_id, {})[
+            operation.actor_seq
+        ] = operation.operation_id
+        pending[operation.operation_id] = operation
+        if self._has_cycle(pending, operation.operation_id, set(), set()):
+            raise OperationOrderError("Causal dependency cycle.")
+
         applied: list[OperationEnvelope] = []
         while True:
             ready = sorted(
                 (
-                    op
-                    for op in self.pending.values()
-                    if op.actor_seq
-                    == self.actor_sequences.get(op.actor_id, 0) + 1
-                    and all(
-                        parent in self.known_ids for parent in op.dependencies
-                    )
+                    op for op in pending.values()
+                    if op.actor_seq == actor_sequences.get(op.actor_id, 0) + 1
+                    and all(parent in known_ids for parent in op.dependencies)
                 ),
                 key=precedence,
             )
             if not ready:
-                return applied
-            for operation in ready:
-                last = self.latest_actor_operation.get(operation.actor_id)
-                if last and (
-                    last.operation_id not in operation.dependencies
-                    or operation.logical_clock <= last.logical_clock
-                ):
-                    raise OperationOrderError("Invalid actor causality.")
-                for parent_id in operation.dependencies:
-                    parent = self.accepted.get(parent_id)
-                    if parent and (
-                        operation.logical_clock <= parent.logical_clock
+                break
+            for candidate in ready:
+                if candidate.operation_id not in pending:
+                    continue
+                try:
+                    last = latest.get(candidate.actor_id)
+                    if last is not None and (
+                        last.operation_id not in candidate.dependencies
+                        or candidate.logical_clock <= last.logical_clock
                     ):
-                        raise OperationOrderError("Invalid logical clock.")
-                del self.pending[operation.operation_id]
-                self.known_ids.add(operation.operation_id)
-                self.accepted[operation.operation_id] = operation
-                self.actor_sequences[operation.actor_id] = operation.actor_seq
-                self.latest_actor_operation[operation.actor_id] = operation
-                applied.append(operation)
+                        raise OperationOrderError("Invalid actor causality.")
+                    for parent_id in candidate.dependencies:
+                        parent = accepted.get(parent_id)
+                        if parent is None:
+                            raise OperationOrderError(
+                                "Unverifiable dependency in checkpoint."
+                            )
+                        if candidate.logical_clock <= parent.logical_clock:
+                            raise OperationOrderError("Invalid logical clock.")
+                except OperationOrderError as exc:
+                    if candidate.operation_id == operation.operation_id:
+                        # A rejected incoming packet cannot leave any state
+                        # change behind, even if earlier operations were ready.
+                        raise
+                    # An earlier buffered packet is now provably bad. Isolate
+                    # it without swallowing the valid operations just accepted.
+                    del pending[candidate.operation_id]
+                    sequence_ids[candidate.actor_id].pop(candidate.actor_seq)
+                    rejected[candidate.operation_id] = str(exc)
+                    continue
+                del pending[candidate.operation_id]
+                known_ids.add(candidate.operation_id)
+                accepted[candidate.operation_id] = candidate
+                actor_sequences[candidate.actor_id] = candidate.actor_seq
+                latest[candidate.actor_id] = candidate
+                applied.append(candidate)
+
+        self.pending = pending
+        self.accepted = accepted
+        self.known_ids = known_ids
+        self.actor_sequences = actor_sequences
+        self.sequence_ids = sequence_ids
+        self.latest_actor_operation = latest
+        self.rejected = rejected
+        return applied
 
 
 class OperationPropertyRegister:
