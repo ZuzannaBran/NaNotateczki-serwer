@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from uuid import uuid4
 from typing import Any
 
-from .operation_protocol import OperationEnvelope
+from .operation_protocol import MAX_SAFE_INTEGER, OperationEnvelope
 
 
 class OperationOrderError(ValueError):
@@ -21,6 +22,108 @@ def precedence(operation: OperationEnvelope) -> tuple[int, str, int, str]:
         operation.actor_seq,
         operation.operation_id,
     )
+
+
+@dataclass
+class OperationActorClock:
+    """Generate immutable local intents and remember observed actor frontiers."""
+
+    actor_id: str
+    actor_seq: int = 0
+    logical_clock: int = 0
+    previous_operation_id: str | None = None
+    observed: dict[str, OperationEnvelope] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if (
+            not self.actor_id
+            or len(self.actor_id) > 128
+            or not 0 <= self.actor_seq <= MAX_SAFE_INTEGER
+            or not 0 <= self.logical_clock <= MAX_SAFE_INTEGER
+            or (self.actor_seq > 0 and not self.previous_operation_id)
+        ):
+            raise ValueError("Invalid actor clock.")
+
+    def observe(self, remote: OperationEnvelope) -> None:
+        """Call after applying a committed remote operation."""
+        if remote.actor_id != self.actor_id:
+            old = self.observed.get(remote.actor_id)
+            if (
+                old is not None
+                and old.actor_seq == remote.actor_seq
+                and old.operation_id != remote.operation_id
+            ):
+                raise ValueError("Forked observed actor.")
+            if old is None or remote.actor_seq > old.actor_seq:
+                self.observed[remote.actor_id] = remote
+        self.logical_clock = max(self.logical_clock, remote.logical_clock)
+
+    def next(
+        self, *, document_id: str, kind: str, payload: dict,
+        page_id: str | None = None, object_id: str | None = None,
+        reverts_operation_id: str | None = None,
+        dependencies: tuple[str, ...] = (),
+    ) -> OperationEnvelope:
+        causal_ids = sorted({
+            *dependencies,
+            *(item.operation_id for item in self.observed.values()),
+            *([self.previous_operation_id] if self.previous_operation_id else []),
+        })
+        if (
+            len(causal_ids) > 256
+            or self.actor_seq >= MAX_SAFE_INTEGER
+            or self.logical_clock >= MAX_SAFE_INTEGER
+        ):
+            raise ValueError("Actor clock or dependency limit exceeded.")
+        op = OperationEnvelope.from_dict({
+            "schemaVersion": 1,
+            "operationId": str(uuid4()),
+            "actorId": self.actor_id,
+            "actorSeq": self.actor_seq + 1,
+            "logicalClock": self.logical_clock + 1,
+            "documentId": document_id,
+            "type": kind,
+            "payload": payload,
+            "dependencies": causal_ids,
+            **({"objectId": object_id} if object_id is not None else {}),
+            **({"pageId": page_id} if page_id is not None else {}),
+            **({"revertsOperationId": reverts_operation_id}
+               if reverts_operation_id is not None else {}),
+        })
+        self.actor_seq = op.actor_seq
+        self.logical_clock = op.logical_clock
+        self.previous_operation_id = op.operation_id
+        return op
+
+    def to_checkpoint(self) -> dict:
+        return {
+            "actorId": self.actor_id,
+            "actorSeq": self.actor_seq,
+            "logicalClock": self.logical_clock,
+            **({"previousOperationId": self.previous_operation_id}
+               if self.previous_operation_id is not None else {}),
+            "observedOperations": [
+                item.to_dict() for item in self.observed.values()
+            ],
+        }
+
+    @classmethod
+    def from_checkpoint(cls, raw: dict) -> "OperationActorClock":
+        try:
+            clock = cls(
+                actor_id=raw["actorId"],
+                actor_seq=raw["actorSeq"],
+                logical_clock=raw["logicalClock"],
+                previous_operation_id=raw.get("previousOperationId"),
+            )
+            for item in raw.get("observedOperations", []):
+                remote = OperationEnvelope.from_dict(item)
+                if remote.logical_clock > clock.logical_clock:
+                    raise ValueError("Observed frontier exceeds actor clock.")
+                clock.observe(remote)
+            return clock
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Invalid actor checkpoint.") from exc
 
 
 @dataclass(frozen=True)
