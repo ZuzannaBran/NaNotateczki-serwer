@@ -6,6 +6,7 @@ import pytest
 
 from app.operation_ordering import (
     CausalOperationBuffer,
+    OperationActorClock,
     OperationCheckpoint,
     OperationOrderError,
     OperationPropertyRegister,
@@ -230,3 +231,38 @@ def test_checkpoint_rejects_incomplete_history_and_pending_outbox():
         CausalOperationBuffer.from_checkpoint(
             OperationCheckpoint((op(A2, "A", 2, 2, deps=[A1]),))
         )
+
+
+def test_actor_clock_carries_observed_remote_dependencies_across_restart():
+    actor = OperationActorClock("local")
+    remote = op(B1, "remote", 1, 20)
+    actor.observe(remote)
+    first = actor.next(
+        document_id="notebook", kind="object.set", page_id="page",
+        object_id="stroke", payload={"properties": {"x": 1}},
+    )
+    assert first.logical_clock == 21
+    assert B1 in first.dependencies
+    resumed = OperationActorClock.from_checkpoint(actor.to_checkpoint())
+    second = resumed.next(
+        document_id="notebook", kind="object.set", page_id="page",
+        object_id="stroke", payload={"properties": {"x": 2}},
+    )
+    assert {B1, first.operation_id}.issubset(second.dependencies)
+
+
+def test_actor_clock_does_not_advance_on_unsafe_dependency_limit():
+    actor = OperationActorClock("local")
+    for index in range(257):
+        remote = op(
+            f"{index:08x}-1111-4111-8111-111111111111",
+            f"remote-{index}", 1, 2,
+        )
+        actor.observe(remote)
+    before = actor.to_checkpoint()
+    with pytest.raises(ValueError):
+        actor.next(
+            document_id="notebook", kind="object.set", page_id="page",
+            object_id="stroke", payload={"properties": {"x": 1}},
+        )
+    assert actor.to_checkpoint() == before
