@@ -210,3 +210,64 @@ def test_folder_moves_reject_cycles_and_orphan_parents():
     )
     assert set(moved["folders"]) == {"root", "child", "leaf"}
     assert moved["folders"]["leaf"]["properties"]["parentId"] == "root"
+
+
+def test_task_level_create_edit_move_delete_and_no_resurrection():
+    deleted = set()
+    state = apply(
+        None,
+        op(410, "task.create", doc="@library", target="task-1",
+           props={"value": {"plannerUid": "p1", "title": "Exercise"}}),
+        deleted,
+    )
+    state = apply(
+        state,
+        op(411, "task.create", doc="@library", target="task-2",
+           props={"value": {"plannerUid": "p1", "title": "Reading"}}),
+        deleted,
+    )
+    state = apply(
+        state,
+        op(412, "task.set", doc="@library", target="task-1",
+           props={"properties": {"completed": True}}),
+        deleted,
+    )
+    assert state["tasks"]["task-1"]["properties"]["completed"] is True
+    state = apply(
+        state,
+        op(413, "task.move", doc="@library", target="task-1",
+           props={"properties": {"plannerUid": "p2"}}),
+        deleted,
+    )
+    assert state["tasks"]["task-1"]["properties"]["plannerUid"] == "p2"
+    state = apply(
+        state,
+        op(414, "task.delete", doc="@library", target="task-1"),
+        deleted,
+    )
+    assert "task-1" not in state["tasks"]
+    assert "task-2" in state["tasks"]
+    state = apply(
+        state,
+        op(415, "task.set", doc="@library", target="task-1",
+           props={"properties": {"title": "Stale"}}),
+        deleted,
+    )
+    assert "task-1" not in state["tasks"]
+    with pytest.raises(ProjectionError, match="deleted"):
+        apply(
+            state, op(416, "task.create", doc="@library", target="task-1",
+                      props={"value": {"plannerUid": "p2"}}), deleted,
+        )
+
+
+def test_task_requires_planner_and_rejects_unverified_identity():
+    deleted = set()
+    with pytest.raises(ProjectionError, match="plannerUid"):
+        apply(None, op(420, "task.create", doc="@library", target="bad"),
+              deleted)
+    with pytest.raises(ProjectionError, match="plannerUid"):
+        apply(
+            None, op(421, "task.create", doc="@library", target="bad",
+                     props={"value": {"plannerUid": 123}}), deleted
+        )
