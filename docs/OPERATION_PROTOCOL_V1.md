@@ -88,9 +88,17 @@ unsupported; the semantic validator must match on Flutter and FastAPI):
 - `asset.attach`: `{"assetId": "...", "sha256": "..."}`; actual image/PDF
   bytes travel via a separate verified asset channel.
 
-Text concurrent-insert positioning needs a tested sequence CRDT/OT reducer
-(stage 6); this model does not pretend a generic property LWW reducer can
-merge arbitrary Quill deltas.
+Stage 6 implements a deterministic sequence CRDT for `text.insert` and
+`text.delete` in `api/app/text_sequence.py`. An editable text object must
+be created with `{"value": {"objectType": "text", "text": ""}}`, and all
+inserted atoms must have immutable UUIDs and anchors. Siblings are ordered by
+descending (Lamport clock, actor ID, actor sequence, operation ID, atom
+index), so inserting at the caret precedes an existing successor.
+Text tombstones remain valid insertion anchors; `object.set` cannot replace
+CRDT text or change `objectType`. Existing nonempty text requires explicit
+atom migration, and rich Quill formatting/attributes still need a separate
+CRDT layer. The CRDT helper alone does not activate production Share:
+stage 11 must migrate legacy UID state before enabling v2 writers.
 
 ## Document-scoped actors and Share v2
 
