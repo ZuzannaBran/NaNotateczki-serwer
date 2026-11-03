@@ -185,14 +185,10 @@ async def put_notebook(
         )
         session.add(record)
     else:
-        # A stale write cannot silently revive a tombstone. An explicitly
-        # retried local edit may restore the same UID after observing the
-        # deletion revision. The owner lock makes acceptance order decisive.
+        # A deleted UID is permanent. Legacy clients may still send
+        # restoreDeleted, but it must not recreate a file removed elsewhere.
         if record.deleted_at is not None:
-            if not body.restoreDeleted or body.expectedRevision != record.revision:
-                await conflict(record, uid)
-            if active_share is not None:
-                await conflict(record, uid)
+            await conflict(record, uid)
         if record.deleted_at is None and active_share is not None and body.baseNotebook is not None:
             from .study_shares import merge_share_document, require_verified_base
 
