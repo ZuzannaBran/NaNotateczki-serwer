@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from uuid import uuid4
 from typing import Any
+from uuid import uuid4
 
 from .operation_protocol import MAX_SAFE_INTEGER, OperationEnvelope
 
