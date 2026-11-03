@@ -217,3 +217,38 @@ def test_latest_backups_are_sorted_by_verification_time() -> None:
         )
     )
     assert result == {"backups": []}
+
+
+def test_checkpoint_metadata_binds_backup_to_owner() -> None:
+    record = backup_record(uuid.uuid4())
+    payload = {"notebooks": [], "libraryState": {}, "studyPlannerState": {}}
+    envelope = {
+        "format": "nanotateczki-server-backup",
+        "version": 2,
+        "deviceId": str(record.device_id),
+        "accountId": str(record.owner_id),
+        "schemaVersion": 5,
+        "operationCheckpoint": {"account": 42},
+        "checksumAlgorithm": "sha256",
+        "checksum": compact_sha256(payload),
+        "payload": payload,
+    }
+    validate_envelope(envelope, record)
+
+    envelope["accountId"] = str(uuid.uuid4())
+    with pytest.raises(ValueError, match="account"):
+        validate_envelope(envelope, record)
+    envelope["accountId"] = str(record.owner_id)
+
+    for checkpoint in ({"account": -1}, {"account": True}, {"": 1}, []):
+        envelope["operationCheckpoint"] = checkpoint
+        with pytest.raises(ValueError, match="checkpoint"):
+            validate_envelope(envelope, record)
+    envelope["operationCheckpoint"] = {"account": 42}
+
+    envelope["schemaVersion"] = True
+    with pytest.raises(ValueError, match="schema version"):
+        validate_envelope(envelope, record)
+    del envelope["schemaVersion"]
+    with pytest.raises(ValueError, match="incomplete"):
+        validate_envelope(envelope, record)

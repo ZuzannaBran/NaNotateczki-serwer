@@ -269,6 +269,28 @@ def validate_envelope(
         or not isinstance(envelope.get("payload"), dict)
     ):
         raise ValueError("unsupported envelope")
+    # Legacy v2 snapshots remain readable. New snapshots bind their
+    # schema and durable operation frontier to the authenticated owner.
+    metadata_keys = ("accountId", "schemaVersion", "operationCheckpoint")
+    if any(key in envelope for key in metadata_keys):
+        if not all(key in envelope for key in metadata_keys):
+            raise ValueError("incomplete backup checkpoint metadata")
+        if envelope["accountId"] != str(backup.owner_id):
+            raise ValueError("backup account does not match owner")
+        schema = envelope["schemaVersion"]
+        if type(schema) is not int or not 1 <= schema <= 1_000_000:
+            raise ValueError("invalid backup schema version")
+        checkpoint = envelope["operationCheckpoint"]
+        if not isinstance(checkpoint, dict) or len(checkpoint) > 256:
+            raise ValueError("invalid operation checkpoint")
+        for scope, sequence in checkpoint.items():
+            if (
+                not isinstance(scope, str)
+                or not 1 <= len(scope) <= 128
+                or type(sequence) is not int
+                or not 0 <= sequence <= 9_007_199_254_740_991
+            ):
+                raise ValueError("invalid operation checkpoint entry")
     payload = envelope["payload"]
     if (
         not isinstance(payload.get("notebooks"), list)
