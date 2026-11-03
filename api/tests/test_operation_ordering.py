@@ -129,3 +129,21 @@ def test_text_atoms_cannot_fall_through_to_scalar_lww():
     })
     with pytest.raises(NotImplementedError):
         OperationPropertyRegister().apply(insertion)
+
+
+def test_cycle_is_rejected_without_applying_any_operation():
+    queue = CausalOperationBuffer()
+    first = op(A1, "A", 1, 2, deps=[B1])
+    second = op(B1, "B", 1, 2, deps=[A1])
+    assert queue.ingest(first) == []
+    with pytest.raises(OperationOrderError):
+        queue.ingest(second)
+    assert len(queue.pending) == 1
+    assert not queue.accepted
+
+
+def test_actor_predecessor_must_be_explicitly_in_dependencies():
+    queue = CausalOperationBuffer()
+    queue.ingest(op(A1))
+    with pytest.raises(OperationOrderError):
+        queue.ingest(op(A2, "A", 2, 2))
