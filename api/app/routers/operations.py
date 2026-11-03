@@ -65,12 +65,15 @@ async def authorize(
             select(StudyShareGrant).where(
                 StudyShareGrant.share_id == share_id,
                 StudyShareGrant.token_hash == token_digest(token),
-                StudyShareGrant.expires_at > datetime.now(UTC),
             )
         )
         share = await session.get(StudyShare, share_id)
         if grant is None or share is None:
             raise HTTPException(status_code=401, detail="Invalid share ticket.")
+        # A formerly valid, expired ticket is a terminal session state, not
+        # an authentication retry. Keep the opaque token binding check first.
+        if grant.expires_at <= datetime.now(UTC):
+            raise HTTPException(status_code=410, detail="Share ticket expired.")
         ensure_active(share)
         return Principal(
             share.owner_id, "share", grant.id, share.id, share.document_uid
