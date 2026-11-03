@@ -95,21 +95,21 @@ def test_stale_backup_cannot_implicitly_revive_deleted_uid(environment):
     assert session.commits == 0
 
 
-def test_edit_after_confirmed_deletion_restores_same_uid(environment):
+def test_legacy_restore_deleted_flag_cannot_revive_tombstone(environment):
     owner, record, session = environment
-    response = asyncio.run(sync.put_notebook(
-        "course",
-        SyncWrite(
-            expectedRevision=2, restoreDeleted=True, notebook=notebook(),
-        ),
-        request(), "b" * 36, owner, session,
-    ))
-    assert response["revision"] == 3
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(sync.put_notebook(
+            "course",
+            SyncWrite(
+                expectedRevision=2, restoreDeleted=True, notebook=notebook(),
+            ),
+            request(), "b" * 36, owner, session,
+        ))
+    assert failure.value.status_code == 409
     assert record.uid == "course"
-    assert record.content["title"] == "Edited later"
-    assert record.deleted_at is None
-    assert session.commits == 1
-    assert session.events[-2].deleted is False
+    assert record.deleted_at is not None
+    assert record.content is None
+    assert session.commits == 0
 
 
 def test_concurrent_delete_must_first_observe_latest_edit(environment):

@@ -1,9 +1,11 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.routers.study_shares import (
-    PNG_MAGIC, ShareCreate, ShareJoin, validate_png_frame,
+    PNG_MAGIC, ShareCreate, ShareJoin, _merge_list, validate_png_frame,
 )
 
 
@@ -67,3 +69,38 @@ def test_session_password_rejects_empty_value():
         ShareCreate(documentUid="board", title="Board", password="")
     with pytest.raises(ValidationError):
         ShareJoin(password="")
+
+
+def test_concurrent_delete_wins_over_earlier_edit():
+    moment = datetime.now(UTC)
+    before = [{"id": "stroke-1", "points": [1]}]
+    latest = [{"id": "stroke-1", "points": [1, 2]}]
+    clock = {
+        "page/1/inkStrokes/stroke-1": {
+            "at": (moment - timedelta(milliseconds=30)).isoformat(),
+            "size": 4,
+        }
+    }
+    merged = _merge_list(
+        before, [], latest, clock, "page/1/inkStrokes", moment,
+    )
+    assert merged == []
+    assert clock["page/1/inkStrokes/stroke-1"]["at"] == moment.isoformat()
+
+
+def test_stale_object_edit_cannot_undo_confirmed_removal():
+    before = [{"id": "stroke-1", "points": [1]}]
+    edit = [{"id": "stroke-1", "points": [1, 2]}]
+    merged = _merge_list(
+        before, edit, [], {}, "page/1/inkStrokes", datetime.now(UTC),
+    )
+    assert merged == []
+
+
+def test_independent_new_strokes_are_added_without_losing_existing_ink():
+    first = [{"id": "first", "points": [1]}]
+    second = [{"id": "second", "points": [2]}]
+    merged = _merge_list(
+        [], second, first, {}, "page/1/inkStrokes", datetime.now(UTC),
+    )
+    assert [stroke["id"] for stroke in merged] == ["first", "second"]

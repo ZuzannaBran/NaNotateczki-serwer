@@ -89,6 +89,7 @@ def _size_of_change(before: object, after: object) -> int:
 def _first_change_wins(
     key: str, before: object, after: object,
     actual: object, clock: dict, received_at: datetime,
+    *, deletion_wins: bool = False,
 ) -> bool:
     """Order by server receipt time, not client clocks.
 
@@ -101,6 +102,14 @@ def _first_change_wins(
     score = _size_of_change(before, after)
     previous = clock.get(key)
     if actual != before and actual != after:
+        if deletion_wins and before is not None:
+            if after is None:
+                # A confirmed removal beats a concurrent stale edit.
+                clock[key] = {"at": received_at.isoformat(), "size": score}
+                return True
+            if actual is None:
+                # Once removed, an old object's ID cannot be resurrected.
+                return False
         if not isinstance(previous, dict):
             return False
         earlier = datetime.fromisoformat(previous["at"])
@@ -128,7 +137,8 @@ def _merge_list(
             continue
         actual = current.get(uid)
         if _first_change_wins(
-            f"{prefix}/{uid}", before, after, actual, clock, received_at
+            f"{prefix}/{uid}", before, after, actual, clock, received_at,
+            deletion_wins=True,
         ):
             if after is None:
                 merged.pop(uid, None)
@@ -213,7 +223,7 @@ def merge_share_document(
         if before is None or after is None:
             if _first_change_wins(
                 f"page/{uid}/structure", before, after,
-                actual, clock, received_at,
+                actual, clock, received_at, deletion_wins=True,
             ):
                 if after is None:
                     combined.pop(uid, None)
