@@ -141,6 +141,8 @@ Na komputerze testowym z Docker Compose v2 i Pythonem 3:
 bash scripts/run-stage12-real.sh
 # Krótka wersja pomija test 1000 dodanych + 1000 skasowanych obiektów:
 bash scripts/run-stage12-real.sh --quick
+# Opcjonalnie z checkoutem aplikacji i Flutter SDK:
+NN_STAGE12_FLUTTER_ROOT=../NaNotateczki bash scripts/run-stage12-real.sh
 ```
 
 Runner uruchamia osobny, nietrwały PostgreSQL 17 na dynamicznym porcie
