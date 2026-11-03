@@ -6,7 +6,6 @@ Tombstones remain so late inserts anchored to deleted atoms can be placed.
 """
 from __future__ import annotations
 
-import copy
 import re
 from typing import Any
 
@@ -36,9 +35,10 @@ def apply_text_operation(node: dict[str, Any], op: OperationEnvelope) -> None:
     if "textAtoms" not in node:
         if properties.get("text", "") not in ("", None):
             raise TextSequenceError("Legacy text needs explicit migration.")
-    atoms = copy.deepcopy(node.get("textAtoms", {}))
-    if not isinstance(atoms, dict):
+    original = node.get("textAtoms", {})
+    if not isinstance(original, dict):
         raise TextSequenceError("Corrupt text atom map.")
+    atoms = dict(original)
 
     if op.kind == "text.insert":
         if set(payload) != {"afterAtomId", "atoms"}:
@@ -88,7 +88,7 @@ def apply_text_operation(node: dict[str, Any], op: OperationEnvelope) -> None:
         ):
             raise TextSequenceError("Invalid or missing text atom ID.")
         for item in ids:
-            atoms[item]["deleted"] = True
+            atoms[item] = {**atoms[item], "deleted": True}
     else:
         raise TextSequenceError("Unsupported text operation.")
 
