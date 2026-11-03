@@ -84,7 +84,7 @@ class OperationEnvelope:
             if not all(isinstance(value, str) for value in values):
                 raise InvalidOperation("Identifiers and type must be strings.")
             for key in ("objectId", "pageId", "revertsOperationId"):
-                if key in raw and not isinstance(raw[key], str):
+                if key in raw and raw[key] is not None and not isinstance(raw[key], str):
                     raise InvalidOperation(f"Invalid optional field: {key}")
             op = cls(
                 operation_id=raw["operationId"],

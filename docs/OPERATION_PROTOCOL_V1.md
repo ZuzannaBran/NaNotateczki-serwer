@@ -113,7 +113,7 @@ ordering, and eventual deterministic convergence, not invented real-time order.
 
 ## Checkpoints and rollout
 
-Stage 2 adds pure ordering/buffering code; stage 3 adds durable SQLite
+Stage 2 implements pure `CausalOperationBuffer`, Lamport comparator and\nscalar-property tombstone registers in both Python and Dart; stage 3 adds durable SQLite
 operations/outbox/checkpoints; stage 4 adds transactional server persistence and
 API v2. Snapshot compaction must retain the actor sequence frontier and a
 causal checkpoint that resolves compacted dependencies. Until then, operation
