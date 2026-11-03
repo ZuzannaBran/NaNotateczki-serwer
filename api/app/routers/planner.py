@@ -90,15 +90,26 @@ async def put_entry(
     await lock_owner_events(session, user.id)
     record = await session.get(PlannerEntry, (user.id, uid))
     if record is not None:
-        if body.modifiedAt <= record.modified_at:
+        # An acknowledged deletion is permanent for this UID. A stale device
+        # must create a new entry with a new UID rather than resurrect this one.
+        if record.deleted:
             return record_json(record)
+        if not body.deleted and body.modifiedAt <= record.modified_at:
+            return record_json(record)
+        # Deletions win against edits made on devices with clocks ahead.
+        # Preserve a monotonic timestamp for all readers and retries.
+        modified_at = (
+            max(body.modifiedAt, record.modified_at + timedelta(microseconds=1))
+            if body.deleted else body.modifiedAt
+        )
     else:
+        modified_at = body.modifiedAt
         record = PlannerEntry(
             owner_id=user.id, uid=uid, content=None,
-            modified_at=body.modifiedAt, deleted=True,
+            modified_at=modified_at, deleted=True,
         )
         session.add(record)
-    record.modified_at = body.modifiedAt
+    record.modified_at = modified_at
     record.content = None if body.deleted else body.entry
     record.deleted = body.deleted
     await session.commit()
