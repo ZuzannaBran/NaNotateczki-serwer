@@ -266,3 +266,17 @@ def test_actor_clock_does_not_advance_on_unsafe_dependency_limit():
             object_id="stroke", payload={"properties": {"x": 1}},
         )
     assert actor.to_checkpoint() == before
+
+
+def test_rejected_id_survives_checkpoint_and_cannot_be_reused():
+    queue = CausalOperationBuffer()
+    bad = op(B1, "B", 1, 1, deps=[A1])
+    queue.ingest(bad)
+    queue.ingest(op(A1, "A", 1, 2))
+    restored = CausalOperationBuffer.from_checkpoint(
+        OperationCheckpoint.from_dict(queue.export_checkpoint().to_dict())
+    )
+    assert B1 in restored.rejected
+    with pytest.raises(OperationOrderError):
+        restored.ingest(op(B1, "B", 1, 3, deps=[A1]))
+    assert restored.ingest(op(B2, "B", 1, 3, deps=[A1]))
