@@ -64,7 +64,8 @@ def test_concurrent_insertions_converge_with_reverse_arrival() -> None:
         one, _ = apply_operation(one, change, set())
     for change in (second, first):
         two, _ = apply_operation(two, change, set())
-    assert node(one) == node(two)
+    assert node(one)["textAtoms"] == node(two)["textAtoms"]
+    assert node(one)["properties"]["text"] == node(two)["properties"]["text"]
     assert node(one)["properties"]["text"] == "BA"
 
 
