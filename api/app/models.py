@@ -183,6 +183,27 @@ class PlannerEntry(Base):
         DateTime(timezone=True), nullable=False
     )
     deleted: Mapped[bool] = mapped_column(nullable=False, default=False)
+    revision: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=1, server_default="1"
+    )
+
+
+class PlannerEntryMutation(Base):
+    """Persisted response for retries following lost HTTP acknowledgments."""
+
+    __tablename__ = "planner_entry_mutations"
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    operation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True,
+    )
+    uid: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
 
 class DocumentState(Base):
     """Materialized v2 projection, separate from legacy synced_notebooks."""
