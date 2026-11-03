@@ -10,6 +10,7 @@ from sqlalchemy import text
 from .database import engine
 from .routers import (
     account_settings, auth, backups, operation_realtime, operations, planner,
+    planner_v2,
     realtime, reports, study_shares, sync,
 )
 from .settings import get_settings
@@ -97,6 +98,7 @@ async def ready() -> dict:
 app.include_router(auth.router)
 app.include_router(account_settings.router)
 app.include_router(planner.router)
+app.include_router(planner_v2.router)
 app.include_router(backups.router)
 app.include_router(sync.router)
 app.include_router(operations.router)
