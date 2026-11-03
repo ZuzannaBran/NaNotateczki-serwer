@@ -26,7 +26,7 @@ def precedence(operation: OperationEnvelope) -> tuple[int, str, int, str]:
 
 @dataclass
 class OperationActorClock:
-    """Generate immutable local intents and remember observed actor frontiers."""
+    """Generate local intents with observed actor frontiers."""
 
     actor_id: str
     actor_seq: int = 0
@@ -67,7 +67,10 @@ class OperationActorClock:
         causal_ids = sorted({
             *dependencies,
             *(item.operation_id for item in self.observed.values()),
-            *([self.previous_operation_id] if self.previous_operation_id else []),
+            *(
+                [self.previous_operation_id]
+                if self.previous_operation_id else []
+            ),
         })
         if (
             len(causal_ids) > 256
@@ -136,7 +139,9 @@ class OperationCheckpoint:
     def to_dict(self) -> dict:
         return {
             "schemaVersion": self.schema_version,
-            "operations": [operation.to_dict() for operation in self.operations],
+            "operations": [
+                operation.to_dict() for operation in self.operations
+            ],
         }
 
     @classmethod
@@ -189,7 +194,9 @@ class CausalOperationBuffer:
     def export_checkpoint(self) -> OperationCheckpoint:
         if self.pending:
             # Pending changes must live in the durable outbox, not a snapshot.
-            raise OperationOrderError("Pending operations cannot be checkpointed.")
+            raise OperationOrderError(
+                "Pending operations cannot be checkpointed."
+            )
         return OperationCheckpoint(
             tuple(sorted(self.accepted.values(), key=precedence))
         )
@@ -209,7 +216,8 @@ class CausalOperationBuffer:
 
     def missing_dependencies(self, operation: OperationEnvelope) -> list[str]:
         return [
-            item for item in operation.dependencies if item not in self.known_ids
+            item for item in operation.dependencies
+            if item not in self.known_ids
         ]
 
     @staticmethod
@@ -246,7 +254,9 @@ class CausalOperationBuffer:
         if operation.operation_id in self.known_ids:
             # This should be unreachable for a complete checkpoint.
             raise OperationOrderError("Missing known operation payload.")
-        if operation.actor_seq <= self.actor_sequences.get(operation.actor_id, 0):
+        if operation.actor_seq <= self.actor_sequences.get(
+            operation.actor_id, 0
+        ):
             raise OperationOrderError("Sequence precedes checkpoint.")
         used = self.sequence_ids.get(operation.actor_id, {}).get(
             operation.actor_seq
