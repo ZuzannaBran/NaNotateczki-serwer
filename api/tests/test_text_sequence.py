@@ -66,6 +66,20 @@ def test_concurrent_insertions_converge_with_reverse_arrival() -> None:
     assert node(one)["properties"]["text"] == "BA"
 
 
+
+def test_later_insert_at_caret_precedes_existing_successor() -> None:
+    state = initial_state()
+    first = operation("text.insert", {
+        "afterAtomId": None,
+        "atoms": [{"id": A, "text": "A"}, {"id": B, "text": "B"}],
+    }, clock=4)
+    caret = operation("text.insert", {
+        "afterAtomId": A, "atoms": [{"id": C, "text": "X"}],
+    }, clock=5)
+    state, _ = apply_operation(state, first, set())
+    state, _ = apply_operation(state, caret, set())
+    assert node(state)["properties"]["text"] == "AXB"
+
 def test_delete_retains_anchor_for_delayed_insert() -> None:
     state = initial_state()
     insert = operation("text.insert", {"afterAtomId": None,
