@@ -15,7 +15,12 @@ done
 project="nnstage12-$$"
 work="$(mktemp -d)"
 compose=(docker compose -p "$project" -f compose.stage12.yaml)
+uvicorn_pid=""
 cleanup() {
+  if [[ -n "$uvicorn_pid" ]]; then
+    kill "$uvicorn_pid" >/dev/null 2>&1 || true
+    wait "$uvicorn_pid" >/dev/null 2>&1 || true
+  fi
   "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$work"
 }
@@ -69,3 +74,43 @@ esac
 
 (cd api && "$work/venv/bin/python" -m pytest -q \
   tests/test_stage12_real_stack.py "${selection[@]}")
+
+# Optional full Flutter -> FastAPI -> PostgreSQL -> WebSocket test.
+if [[ -n "$NN_STAGE12_FLUTTER_ROOT" ]]; then
+  if ! command -v flutter >/dev/null 2>&1; then
+    echo "Flutter SDK required for optional client E2E" >&2
+    exit 2
+  fi
+  flutter_root="$(cd "$NN_STAGE12_FLUTTER_ROOT" && pwd)"
+  if [[ ! -f "$flutter_root/pubspec.yaml" ||
+        ! -f "$flutter_root/test/production/stage12_live_api_test.dart" ]]; then
+    echo "Invalid Flutter repository: $flutter_root" >&2
+    exit 2
+  fi
+
+  http_port="$("$work/venv/bin/python" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  export ALLOW_REGISTRATION=true
+  (cd api && exec "$work/venv/bin/python" -m uvicorn app.main:app \
+    --host 127.0.0.1 --port "$http_port") >"$work/uvicorn.log" 2>&1 &
+  uvicorn_pid="$!"
+  ready=0
+  for _ in $(seq 1 50); do
+    if "$work/venv/bin/python" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$http_port/ready', timeout=1)" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    if ! kill -0 "$uvicorn_pid" 2>/dev/null; then
+      cat "$work/uvicorn.log" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+  if [[ "$ready" != 1 ]]; then
+    cat "$work/uvicorn.log" >&2
+    echo "Stage 12 local API did not become ready" >&2
+    exit 1
+  fi
+  (cd "$flutter_root" && flutter pub get && flutter test \
+    --dart-define="NN_STAGE12_API_URL=http://127.0.0.1:$http_port" \
+    test/production/stage12_live_api_test.dart)
+fi
