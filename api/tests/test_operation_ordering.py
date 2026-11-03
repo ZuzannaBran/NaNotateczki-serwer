@@ -6,6 +6,7 @@ import pytest
 
 from app.operation_ordering import (
     CausalOperationBuffer,
+    OperationCheckpoint,
     OperationOrderError,
     OperationPropertyRegister,
     precedence,
@@ -114,10 +115,18 @@ def test_same_field_tiebreak_is_independent_of_arrival_order():
 
 
 def test_snapshot_frontier_and_queue_limit():
-    queue = CausalOperationBuffer(actor_sequences={"A": 2}, maximum_pending=1)
+    original = CausalOperationBuffer()
+    original.ingest(op(A1))
+    original.ingest(op(A2, "A", 2, 2, deps=[A1]))
+    checkpoint = OperationCheckpoint.from_dict(
+        original.export_checkpoint().to_dict()
+    )
+    queue = CausalOperationBuffer.from_checkpoint(
+        checkpoint, maximum_pending=1
+    )
     with pytest.raises(OperationOrderError):
         queue.ingest(op(A1))
-    queue.ingest(op(A2, "A", 4, 4))
+    assert queue.ingest(op(B1, "A", 4, 4)) == []
     with pytest.raises(OperationOrderError):
         queue.ingest(op(B2, "B", 2, 4))
 
@@ -147,3 +156,77 @@ def test_actor_predecessor_must_be_explicitly_in_dependencies():
     queue.ingest(op(A1))
     with pytest.raises(OperationOrderError):
         queue.ingest(op(A2, "A", 2, 2))
+
+
+def test_bad_buffered_dependent_is_quarantined_without_losing_parent():
+    queue = CausalOperationBuffer()
+    bad = op(B1, "B", 1, 1, deps=[A1])
+    assert queue.ingest(bad) == []
+    parent = op(A1, "A", 1, 2)
+    assert queue.ingest(parent) == [parent]
+    assert queue.accepted[A1] == parent
+    assert B1 not in queue.pending
+    assert B1 in queue.rejected
+    # The invalid operation no longer reserves its actor sequence.
+    corrected = op(B2, "B", 1, 3, deps=[A1])
+    assert queue.ingest(corrected) == [corrected]
+    with pytest.raises(OperationOrderError):
+        queue.ingest(bad)
+
+
+def test_bad_incoming_operation_does_not_mutate_checkpoint():
+    queue = CausalOperationBuffer()
+    first = op(A1, "A", 1, 7)
+    assert queue.ingest(first) == [first]
+    before = queue.export_checkpoint().to_dict()
+    with pytest.raises(OperationOrderError):
+        queue.ingest(op(A2, "A", 2, 7, deps=[A1]))
+    assert queue.export_checkpoint().to_dict() == before
+    assert not queue.pending
+    assert not queue.rejected
+    assert queue.ingest(op(A2, "A", 2, 8, deps=[A1]))
+
+
+def test_recovered_checkpoint_rejects_forged_actor_and_dependency_clocks():
+    queue = CausalOperationBuffer()
+    first = op(A1, "A", 1, 15)
+    queue.ingest(first)
+    restored = CausalOperationBuffer.from_checkpoint(
+        OperationCheckpoint.from_dict(
+            queue.export_checkpoint().to_dict()
+        )
+    )
+    with pytest.raises(OperationOrderError):
+        restored.ingest(op(A2, "A", 2, 16))
+    with pytest.raises(OperationOrderError):
+        restored.ingest(op(A2, "A", 2, 15, deps=[A1]))
+    with pytest.raises(OperationOrderError):
+        restored.ingest(op(B1, "B", 1, 14, deps=[A1]))
+    assert restored.ingest(op(B1, "B", 1, 16, deps=[A1]))
+
+
+def test_recovered_checkpoint_rejects_changed_duplicate_payload():
+    queue = CausalOperationBuffer()
+    original = op(A1)
+    queue.ingest(original)
+    restored = CausalOperationBuffer.from_checkpoint(
+        queue.export_checkpoint()
+    )
+    assert restored.ingest(original) == []
+    with pytest.raises(OperationOrderError):
+        restored.ingest(
+            op(A1, payload={"properties": {"color": "forged"}})
+        )
+
+
+def test_checkpoint_rejects_incomplete_history_and_pending_outbox():
+    queue = CausalOperationBuffer()
+    queue.ingest(op(A2, "A", 2, 2, deps=[A1]))
+    with pytest.raises(OperationOrderError):
+        queue.export_checkpoint()
+    with pytest.raises(ValueError):
+        CausalOperationBuffer(actor_sequences={"A": 1})
+    with pytest.raises(ValueError):
+        CausalOperationBuffer.from_checkpoint(
+            OperationCheckpoint((op(A2, "A", 2, 2, deps=[A1]),))
+        )
