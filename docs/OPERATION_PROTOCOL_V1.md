@@ -17,8 +17,8 @@ preview. State is rebuilt from a checkpoint followed by accepted operations.
 - `actorId`: persistent actor/installation identity scoped to one account
   namespace or one Share guest session. Changing storage namespace creates a
   new actor; actor IDs must never be reused across unrelated namespaces.
-- `actorSeq`: positive (at most `2^53-1`), strictly increasing **per actor and namespace**,
-  across all documents in that namespace; persisted with the pending operation.
+- `actorSeq`: positive (at most `2^53-1`), strictly increasing **per document-scoped actor**;
+  persisted with the pending operation.
 - `documentId`: stable document UID; the reserved literal `@library`
   denotes folder operations.
 - `pageId` and `objectId`: stable IDs; for page operations `objectId`
@@ -70,14 +70,18 @@ are emitted (stage 8). Renaming an entity does not change its ID.
 | Assets | `asset.attach`, `asset.detach` |
 | Folders | `folder.create`, `folder.set`, `folder.move`, `folder.delete` |
 
-Planned payload contracts for reducers (the envelope currently validates JSON
-shape and identity; semantic validation will be added before activating API v2):
+Payload contracts for currently supported v2 reducers (text and assets remain
+unsupported; the semantic validator must match on Flutter and FastAPI):
 
-- `*.create`: `{"value": {...}}`, complete initial object with stable ID.
+- `*.create`: `{"value": {...}}` (an empty object is permitted for a blank entity);
+  any supplied `id`/`uid` must match the stable target identity.
 - `*.set`, `object.transform`, `object.reorder`, `folder.move`:
   `{"properties": {"propertyName": value}}`. Each property is versioned
   separately so moving an object does not discard a concurrent color edit.
+  `id` and `uid` are immutable and forbidden in `properties`.
 - `*.delete`: `{}`, persistent tombstone for the exact stable ID.
+- Supported v2 payloads contain exactly the specified top-level key; extra
+  keys are rejected rather than silently ignored.
 - `text.insert`: `{"afterAtomId": null | "<atom UUID>", "atoms":
   [{"id": "<atom UUID>", "text": "..."}]}`.
 - `text.delete`: `{"atomIds": ["<atom UUID>"]}`. Atom IDs are never reused.

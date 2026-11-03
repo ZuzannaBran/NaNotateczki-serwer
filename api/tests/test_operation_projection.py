@@ -132,3 +132,45 @@ def test_reject_modified_delete_payload_and_missing_properties():
     with pytest.raises(ProjectionError, match="properties"):
         apply(state, op(4, "page.set", target="p",
                         props={"properties": {}}), deleted)
+
+
+
+def test_reject_extra_payload_fields_in_v2_projection():
+    state, deleted = seeded()
+    with pytest.raises(ProjectionError, match="exactly one properties"):
+        apply(
+            state,
+            op(3, "page.set", target="p",
+               props={"properties": {"x": 4}, "ignored": "unvalidated"}),
+            deleted,
+        )
+
+
+def test_reject_identity_changes_in_v2_projection():
+    state, deleted = seeded()
+    for field in ("id", "uid"):
+        with pytest.raises(ProjectionError, match="Stable IDs"):
+            apply(
+                state,
+                op(3, "page.set", target="p",
+                   props={"properties": {field: "forged-id"}}),
+                deleted,
+            )
+
+
+def test_empty_creation_is_valid_but_property_update_requires_fields():
+    state, deleted = seeded()
+    state = apply(
+        state,
+        op(3, "object.create", page="p", target="blank",
+           props={"value": {}}),
+        deleted,
+    )
+    assert "blank" in state["pages"]["p"]["objects"]
+    with pytest.raises(ProjectionError, match="properties"):
+        apply(
+            state,
+            op(4, "object.set", page="p", target="blank",
+               props={"properties": {}}),
+            deleted,
+        )

@@ -20,8 +20,12 @@ def _properties(operation: OperationEnvelope, *, create: bool) -> dict:
     payload = operation.to_dict()["payload"]
     name = "value" if create else "properties"
     fields = payload.get(name)
-    if not isinstance(fields, dict) or (not create and not fields):
-        raise ProjectionError(f"Expected nonempty {name} object.")
+    if set(payload) != {name} or not isinstance(fields, dict) or (
+        not create and not fields
+    ):
+        raise ProjectionError(f"Expected exactly one {name} object.")
+    if not create and ("id" in fields or "uid" in fields):
+        raise ProjectionError("Stable IDs cannot be changed by property edits.")
     if any(not isinstance(key, str) or not 1 <= len(key) <= 128 for key in fields):
         raise ProjectionError("Invalid property name.")
     if create and "id" in fields:
