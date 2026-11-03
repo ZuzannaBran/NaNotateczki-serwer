@@ -108,7 +108,7 @@ def render_text(atoms: dict[str, dict]) -> str:
             raise TextSequenceError("Self-referential text atom.")
         children.setdefault(parent, []).append(atom_id)
     for siblings in children.values():
-        siblings.sort(key=lambda item: (atoms[item]["order"], item))
+        siblings.sort(key=lambda item: (atoms[item]["order"], item), reverse=True)
 
     output: list[str] = []
     visited: set[str] = set()
