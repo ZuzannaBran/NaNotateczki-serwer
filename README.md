@@ -1,7 +1,10 @@
 # NaNotateczki backend
 
-Backend działa z `api/` w katalogu głównym serwera. Jego kopia źródłowa jest
-w `code/NaNotateczki/server/`. API udostępnia konta z nazwą użytkownika jako loginem, hasła Argon2id, krótkie tokeny dostępu, rotowane tokeny
+Źródłem prawdy dla backendu jest repozytorium
+`ZuzannaBran/NaNotateczki-serwer`, gałąź `main`.
+Katalog `NaNotateczki/server/` w repo aplikacji jest zgodnościowym lustrem
+backendu dla istniejących testów; nie należy wdrażać z niego niezależnych zmian.
+Backend działa z `api/` w katalogu głównym serwera. API udostępnia konta z nazwą użytkownika jako loginem, hasła Argon2id, krótkie tokeny dostępu, rotowane tokeny
 odświeżania, synchronizację notatników z rewizjami i dziennikiem zmian, sygnały
 WebSocket oraz zweryfikowane snapshoty urządzeń.
 
