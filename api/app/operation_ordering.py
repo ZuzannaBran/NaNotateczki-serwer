@@ -139,7 +139,9 @@ class OperationCheckpoint:
     rejected: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "rejected", MappingProxyType(dict(self.rejected)))
+        object.__setattr__(
+            self, "rejected", MappingProxyType(dict(self.rejected))
+        )
 
     def to_dict(self) -> dict:
         return {
@@ -261,8 +263,9 @@ class CausalOperationBuffer:
         return False
 
     def ingest(self, operation: OperationEnvelope) -> list[OperationEnvelope]:
-        existing = self.pending.get(operation.operation_id) or self.accepted.get(
-            operation.operation_id
+        existing = (
+            self.pending.get(operation.operation_id)
+            or self.accepted.get(operation.operation_id)
         )
         if existing is not None:
             if existing.to_dict() != operation.to_dict():
