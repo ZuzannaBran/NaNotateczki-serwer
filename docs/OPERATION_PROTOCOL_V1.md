@@ -113,9 +113,34 @@ If two devices work offline without seeing one another, their physical gesture
 order cannot be reconstructed. This contract guarantees actor ordering, causal
 ordering, and eventual deterministic convergence, not invented real-time order.
 
+## Stage-2 safety invariants
+
+The pure buffer uses copy-on-write staging. An invalid incoming operation
+never partially advances the accepted frontier. If an older buffered operation
+becomes invalid when its parent arrives, that buffered operation is isolated
+in a diagnostic `rejected` map and its reserved sequence is released; the
+valid parent is still returned for application. A correction must carry a
+new `operationId` because operation IDs identify immutable intents.
+Dependents of a rejected ID stay blocked until explicitly reconciled.
+
+`OperationCheckpoint` deliberately retains complete accepted envelopes,
+including all causal dependencies and payloads. Replaying this history on
+restore validates actor continuity, Lamport clocks and altered retransmissions.
+A bare actor sequence or a set of known IDs is **not** a safe checkpoint.
+Pending operations belong to the durable outbox, not to a committed snapshot.
+This prototype must not compact historical envelopes until stage 3 provides
+a durable ID-to-envelope lookup and a verified causal frontier.
+
+`OperationActorClock.observe()` remembers the latest accepted remote
+operation per actor. New local operations depend on those observed frontiers
+and on their immediate own predecessor. Exceeding 256 dependencies or the
+safe integer limit fails before incrementing the local counter. The actor's
+observed frontier must be checkpointed together with its sequence and clock.
+
 ## Checkpoints and rollout
 
-Stage 2 implements pure `CausalOperationBuffer`, Lamport comparator and\nscalar-property tombstone registers in both Python and Dart; stage 3 adds durable SQLite
+Stage 2 implements pure `CausalOperationBuffer`, Lamport comparator and
+scalar-property tombstone registers in both Python and Dart; stage 3 adds durable SQLite
 operations/outbox/checkpoints; stage 4 adds transactional server persistence and
 API v2. Snapshot compaction must retain the actor sequence frontier and a
 causal checkpoint that resolves compacted dependencies. Until then, operation
