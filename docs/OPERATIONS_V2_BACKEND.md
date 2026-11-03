@@ -48,7 +48,7 @@ revocation are checked before commits.
   "cursor": 45, "status": "applied" | "duplicate"}]}`.
 - `GET /v2/operations?after=<cursor>` — accepted operation envelopes,
   returned as `{"cursor": ..., "hasMore": true|false, "operations":
-  [{"cursor": ..., "operation": <envelope>}]}`, 100 per page.
+  [{"cursor": ..., "operation": <envelope>}]}`, at most 25 per page (8 MiB soft cap).
 - `GET /v2/documents/{id}/snapshot` — `documentId`, `revision`,
   `cursor`, `deleted` and `state`. State and cursor are captured using
   one PostgreSQL MVCC statement.

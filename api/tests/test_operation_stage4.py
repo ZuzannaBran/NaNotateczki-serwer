@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from app.operation_protocol import OperationEnvelope
 from app.routers.operations import (
     OperationBatch, Principal, apply_one, ensure_actor_binding,
-    validate_target,
+    list_operations, validate_target,
 )
 
 OP_ID = "11111111-1111-4111-8111-111111111111"
@@ -138,3 +138,33 @@ def test_batch_limits_and_strict_envelope():
         OperationBatch(operations=[])
     with pytest.raises(ValidationError):
         OperationBatch(operations=[{}], unknown=True)
+
+
+def test_cursor_feed_is_paginated_without_skipping_operations():
+    class Session:
+        async def scalars(self, query):
+            rows = [
+                SimpleNamespace(cursor=n, envelope={"operationId": str(n)})
+                for n in range(1, 27)
+            ]
+            return SimpleNamespace(all=lambda: rows)
+
+    feed = asyncio.run(list_operations(principal(), 0, Session()))
+    assert len(feed["operations"]) == 25
+    assert feed["cursor"] == 25
+    assert feed["hasMore"] is True
+
+
+def test_cursor_feed_has_a_payload_byte_budget():
+    class Session:
+        async def scalars(self, query):
+            rows = [
+                SimpleNamespace(cursor=n, envelope={"payload": "x" * 1_000_000})
+                for n in range(1, 27)
+            ]
+            return SimpleNamespace(all=lambda: rows)
+
+    feed = asyncio.run(list_operations(principal(), 0, Session()))
+    assert len(feed["operations"]) == 8
+    assert feed["cursor"] == 8
+    assert feed["hasMore"] is True

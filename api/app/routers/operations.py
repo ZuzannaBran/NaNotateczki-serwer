@@ -1,6 +1,7 @@
 """Stage-4 transactional operation API, independent of legacy snapshot sync."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
@@ -30,7 +31,8 @@ from .sync import lock_owner_events
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v2", tags=["operations"])
 MAX_BATCH = 50
-MAX_PAGE = 100
+MAX_PAGE = 25
+MAX_PAGE_BYTES = 8 * 1024 * 1024
 _ID = re.compile(r"^[^\x00-\x1f\x7f]{1,128}$")
 
 
@@ -343,13 +345,23 @@ async def list_operations(
     items = list((await session.scalars(
         query.order_by(DocumentOperation.cursor).limit(MAX_PAGE + 1)
     )).all())
-    has_more = len(items) > MAX_PAGE
-    items = items[:MAX_PAGE]
-    return {"cursor": items[-1].cursor if items else after,
-            "hasMore": has_more,
+    page = []
+    size_bytes = 0
+    for row in items:
+        encoded_size = len(json.dumps(
+            row.envelope, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8"))
+        if page and (
+            len(page) >= MAX_PAGE or size_bytes + encoded_size > MAX_PAGE_BYTES
+        ):
+            break
+        page.append(row)
+        size_bytes += encoded_size
+    return {"cursor": page[-1].cursor if page else after,
+            "hasMore": len(items) > len(page),
             "operations": [
                 {"cursor": row.cursor, "operation": row.envelope}
-                for row in items
+                for row in page
             ]}
 
 
