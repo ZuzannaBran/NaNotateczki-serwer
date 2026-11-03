@@ -55,10 +55,10 @@ def apply_text_operation(node: dict[str, Any], op: OperationEnvelope) -> None:
             raise TextSequenceError("Unknown text insertion anchor.")
         ids = [item.get("id") if isinstance(item, dict) else None
                for item in values]
-        if len(set(ids)) != len(ids) or any(not _atom_id(item) for item in ids):
-            raise TextSequenceError("Duplicate or invalid text atom ID.")
-        if any(item in atoms for item in ids):
-            raise TextSequenceError("Text atom ID was already used.")
+        if any(not _atom_id(item) for item in ids):
+            raise TextSequenceError("Invalid text atom ID.")
+        if len(set(ids)) != len(ids) or any(item in atoms for item in ids):
+            raise TextSequenceError("Duplicate or reused text atom ID.")
         for item in values:
             if (
                 not isinstance(item, dict)
@@ -82,8 +82,9 @@ def apply_text_operation(node: dict[str, Any], op: OperationEnvelope) -> None:
         if (
             not isinstance(ids, list)
             or not 1 <= len(ids) <= MAX_ATOMS_PER_OPERATION
+            or any(not _atom_id(item) for item in ids)
             or len(set(ids)) != len(ids)
-            or any(not _atom_id(item) or item not in atoms for item in ids)
+            or any(item not in atoms for item in ids)
         ):
             raise TextSequenceError("Invalid or missing text atom ID.")
         for item in ids:
