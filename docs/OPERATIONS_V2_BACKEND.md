@@ -42,8 +42,10 @@ not modify any historical migration.
 All REST calls require `Authorization: Bearer <access JWT>`. Guests use
 `Authorization: Bearer <Share ticket>` **and**
 `X-Share-Id: <Share UUID>`, with strict document scope. Grant expiry and
-revocation are checked before commits. Browser CORS preflight permits
-`X-Share-Id` as a request header, but does not grant authorization.
+revocation are checked before commits. A ticket that matches an existing
+Share grant but has expired returns 410 (terminal, outbox remains local);
+unknown tickets return 401. Browser CORS preflight permits `X-Share-Id`
+as a request header, but does not grant authorization.
 
 - `POST /v2/operations/batch` — body `{"operations": [<envelope>, ...]}`,
   1–50 operations, JSON request limit 1 MiB. Response:
