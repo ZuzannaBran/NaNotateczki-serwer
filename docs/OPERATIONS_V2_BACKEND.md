@@ -16,6 +16,8 @@ not modify any historical migration.
   and retains its last accepted sequence, predecessor and logical clock.
 - `document_states` is a JSONB materialized projection separate from v1
   `synced_notebooks`. Its `revision` advances on each accepted operation.
+  Projected JSON is bounded by the configured document size cap before any
+  journal or state insert is committed; an oversized edit returns HTTP 413.
 - `object_tombstones` permanently blocks ID recreation inside an account.
 - Each batch holds the existing owner event lock and a global v2 event lock.
   Operations, actor checkpoints, tombstones, projections and event cursors

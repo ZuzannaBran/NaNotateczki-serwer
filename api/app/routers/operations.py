@@ -25,6 +25,7 @@ from ..operation_protocol import (
 )
 from ..realtime_hub import hub
 from ..security import decode_access_token_claims, token_digest
+from ..settings import get_settings
 from .study_shares import ensure_active
 from .sync import lock_owner_events
 
@@ -115,6 +116,16 @@ def validate_target(op: OperationEnvelope, principal: Principal) -> None:
         op.reverts_operation_id not in op.dependencies
     ):
         raise HTTPException(status_code=422, detail="Missing inverse dependency.")
+
+
+def ensure_projection_budget(projected: dict | None, maximum_bytes: int) -> None:
+    if projected is None:
+        return
+    encoded = json.dumps(
+        projected, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    if len(encoded) > maximum_bytes:
+        raise HTTPException(status_code=413, detail="Document is too large.")
 
 
 def ensure_actor_binding(
@@ -224,6 +235,7 @@ async def apply_one(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if projected is None and state is None and op.kind != "document.delete":
         raise HTTPException(status_code=409, detail="Document is not initialized.")
+    ensure_projection_budget(projected, get_settings().maximum_sync_bytes)
 
     row = DocumentOperation(
         owner_id=owner_id, operation_id=uuid.UUID(op.operation_id),

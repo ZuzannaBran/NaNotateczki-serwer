@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from app.operation_protocol import OperationEnvelope
 from app.routers.operations import (
     OperationBatch, Principal, apply_one, ensure_actor_binding,
-    list_operations, validate_target,
+    ensure_projection_budget, list_operations, validate_target,
 )
 
 OP_ID = "11111111-1111-4111-8111-111111111111"
@@ -222,3 +222,12 @@ def test_cursor_feed_has_a_payload_byte_budget():
     assert len(feed["operations"]) == 8
     assert feed["cursor"] == 8
     assert feed["hasMore"] is True
+
+
+
+def test_projection_size_is_checked_before_any_database_write():
+    ensure_projection_budget({"text": "small"}, 64)
+    with pytest.raises(HTTPException) as error:
+        ensure_projection_budget({"text": "é" * 30}, 50)
+    assert error.value.status_code == 413
+    assert error.value.detail == "Document is too large."
