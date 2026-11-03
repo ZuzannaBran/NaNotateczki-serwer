@@ -120,7 +120,8 @@ def _merge_list(
     new = _items_by_id(changed)
     current = _items_by_id(latest)
     merged = dict(current)
-    for uid in sorted(old.keys() | new.keys()):
+    # Preserve the sender's insertion order for newly added drawing objects.
+    for uid in dict.fromkeys([*new, *old]):
         before = old.get(uid)
         after = new.get(uid)
         if before == after:
@@ -203,7 +204,7 @@ def merge_share_document(
     submitted = _items_by_id(changed["pages"])
     current = _items_by_id(latest["pages"])
     combined = dict(current)
-    for uid in sorted(original.keys() | submitted.keys()):
+    for uid in dict.fromkeys([*submitted, *original]):
         before = original.get(uid)
         after = submitted.get(uid)
         actual = current.get(uid)
