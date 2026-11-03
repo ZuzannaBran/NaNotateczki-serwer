@@ -174,3 +174,39 @@ def test_empty_creation_is_valid_but_property_update_requires_fields():
                props={"properties": {}}),
             deleted,
         )
+
+
+def test_folder_moves_reject_cycles_and_orphan_parents():
+    deleted = set()
+    state = apply(
+        None, op(301, "folder.create", doc="@library", target="root",
+                 props={"value": {"name": "Root", "parentId": None}}), deleted
+    )
+    state = apply(
+        state, op(302, "folder.create", doc="@library", target="child",
+                  props={"value": {"name": "Child", "parentId": "root"}}),
+        deleted,
+    )
+    state = apply(
+        state, op(303, "folder.create", doc="@library", target="leaf",
+                  props={"value": {"name": "Leaf", "parentId": "child"}}),
+        deleted,
+    )
+
+    with pytest.raises(ProjectionError, match="cycle"):
+        apply(state, op(304, "folder.move", doc="@library", target="root",
+                        props={"properties": {"parentId": "leaf"}}), deleted)
+    with pytest.raises(ProjectionError, match="does not exist"):
+        apply(state, op(305, "folder.move", doc="@library", target="child",
+                        props={"properties": {"parentId": "missing"}}), deleted)
+    with pytest.raises(ProjectionError, match="has children"):
+        apply(state, op(306, "folder.delete", doc="@library", target="root"),
+              deleted)
+
+    # Valid reparenting changes references without creating another folder.
+    moved = apply(
+        state, op(307, "folder.move", doc="@library", target="leaf",
+                  props={"properties": {"parentId": "root"}}), deleted
+    )
+    assert set(moved["folders"]) == {"root", "child", "leaf"}
+    assert moved["folders"]["leaf"]["properties"]["parentId"] == "root"
