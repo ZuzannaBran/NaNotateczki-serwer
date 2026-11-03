@@ -83,7 +83,7 @@ if [[ -n "${NN_STAGE12_FLUTTER_ROOT:-}" ]]; then
   fi
   flutter_root="$(cd "$NN_STAGE12_FLUTTER_ROOT" && pwd)"
   if [[ ! -f "$flutter_root/pubspec.yaml" ||
-        ! -f "$flutter_root/test/production/stage12_live_api_test.dart" ]]; then
+        ! -f "$flutter_root/integration_test/stage12_live_api_test.dart" ]]; then
     echo "Invalid Flutter repository: $flutter_root" >&2
     exit 2
   fi
@@ -110,7 +110,8 @@ if [[ -n "${NN_STAGE12_FLUTTER_ROOT:-}" ]]; then
     echo "Stage 12 local API did not become ready" >&2
     exit 1
   fi
-  (cd "$flutter_root" && flutter pub get && flutter test \
+  flutter_device="${NN_STAGE12_DEVICE_ID:-linux}"
+  (cd "$flutter_root" && flutter pub get && flutter test -d "$flutter_device" \
     --dart-define="NN_STAGE12_API_URL=http://127.0.0.1:$http_port" \
-    test/production/stage12_live_api_test.dart)
+    integration_test/stage12_live_api_test.dart)
 fi
