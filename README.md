@@ -85,6 +85,17 @@ Pełna kopia serwera wymaga osobnego fizycznego nośnika. Uruchamiaj regularnie
 Zaplanuj go w systemowym harmonogramie po udostępnieniu nośnika. Przed
 migracją wykonaj pełną kopię i test odtworzenia na osobnej instancji.
 
+## Kontrola zegara klienta
+
+Publiczny `GET /v1/time` zwraca `serverTimeMs`, czyli uniksowy czas
+UTC w milisekundach z zegara serwera. API ustawia `Cache-Control: no-store`.
+Klient porównuje go przy starcie zalogowanej sesji z własnym czasem,
+uwzględniając RTT; rozbieżność większa niż minuta zgłaszana jest do Errors.
+Endpoint nie wymaga tokenu i nie zmienia stanu bazy.
+**Serwer musi mieć poprawnie zsynchronizowany zegar (NTP)**, w przeciwnym
+razie ostrzeżenie klienta nie jest wiarygodne. Po aktualizacji kodu
+wykonaj `docker compose up -d --build api`; migracje SQL nie są potrzebne.
+
 ## Synchronizacja ustawień konta
 
 `GET /v1/account-settings` zwraca osobne rewizje ustawień aplikacji,
