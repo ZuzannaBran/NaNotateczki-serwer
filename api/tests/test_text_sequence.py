@@ -160,6 +160,16 @@ def test_text_graph_rejects_cycles() -> None:
 
 
 
+def test_object_type_cannot_be_changed_by_property_set() -> None:
+    state = initial_state()
+    with pytest.raises(ProjectionError, match="Identity"):
+        apply_operation(
+            state, operation("object.set", {
+                "properties": {"objectType": "image"},
+            }), set(),
+        )
+
+
 def test_nontext_objects_reject_crdt_text_operations() -> None:
     state = initial_state()
     node(state)["properties"]["objectType"] = "image"
