@@ -6,7 +6,7 @@ No fake database, dependency overrides, or mocked WebSocket hub are used.
 import asyncio
 import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -172,14 +172,13 @@ def test_1000_inserts_1000_deletes_and_idempotent_retries(client):
         changes.append(actor.next(
             "object.delete", target=f"ink-{n}", page=page, payload={},
         ))
-    last_ack = None
     for index in range(0, len(changes), 50):
         batch = changes[index:index + 50]
-        last_ack = submit(client, token, batch)
-        assert len(last_ack["acknowledgements"]) == len(batch)
+        response = submit(client, token, batch)
+        assert len(response["acknowledgements"]) == len(batch)
         assert all(
             ack["status"] == "applied"
-            for ack in last_ack["acknowledgements"]
+            for ack in response["acknowledgements"]
         )
     final = snapshot(client, token, document)
     assert final["revision"] == 2002
@@ -364,3 +363,80 @@ def test_real_websocket_share_delivery_and_revocation(client):
     submit(client, ticket, [retry], share_id=share_id, status=410)
     assert "alpha" in snapshot(client, token, document)["state"][
         "pages"][page]["objects"]
+
+
+def test_page_delete_wins_over_late_write_and_undo_redo_is_logged(client):
+    _, token = identity()
+    document, page, _, initial_page = initial_document(client, token)
+    actor = Actor(document, "undo-" + uuid.uuid4().hex, clock=2)
+    created = actor.next(
+        "stroke.create", target="old-stroke", page=page,
+        payload={"value": {"x": 0}},
+        after=[initial_page["operationId"]],
+    )
+    moved = actor.next(
+        "object.transform", target="old-stroke", page=page,
+        payload={"properties": {"x": 30}},
+    )
+    undo = actor.next(
+        "object.transform", target="old-stroke", page=page,
+        payload={"properties": {"x": 0}},
+    )
+    undo["revertsOperationId"] = moved["operationId"]
+    redo = actor.next(
+        "object.transform", target="old-stroke", page=page,
+        payload={"properties": {"x": 30}},
+    )
+    redo["revertsOperationId"] = undo["operationId"]
+    for item in (created, moved, undo, redo):
+        submit(client, token, [item])
+    state = snapshot(client, token, document)["state"]
+    assert state["pages"][page]["objects"]["old-stroke"]["properties"]["x"] == 30
+
+    removed = actor.next("page.delete", target=page, payload={})
+    submit(client, token, [removed])
+    other = Actor(document, "late-" + uuid.uuid4().hex, clock=8)
+    attempted = other.next(
+        "stroke.create", target="new-stroke", page=page,
+        payload={"value": {"x": 123}}, after=[removed["operationId"]],
+    )
+    submit(client, token, [attempted], status=422)
+    state = snapshot(client, token, document)["state"]
+    assert state["pages"] == {}
+    assert state is not None
+    assert len(feed(client, token)) == 7
+
+
+def test_socket_reconnect_recovers_missed_feed(client):
+    _, token = identity()
+    document, page, _, last = initial_document(client, token)
+    checkpoint = snapshot(client, token, document)["cursor"]
+    actor = Actor(document, "reconnect-" + uuid.uuid4().hex, clock=2)
+    first = actor.next(
+        "stroke.create", target="offline-1", page=page,
+        payload={"value": {"x": 1}}, after=[last["operationId"]],
+    )
+    # No subscribed WebSocket during this commit.
+    submit(client, token, [first])
+    resumed = client.get(
+        "/v2/operations", params={"after": checkpoint},
+        headers=headers(token),
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert [item["operation"]["operationId"]
+            for item in resumed.json()["operations"]] == [first["operationId"]]
+
+    origin = str(get_settings().app_origin).rstrip("/")
+    with client.websocket_connect(
+        "/v2/realtime", headers={"Origin": origin},
+    ) as websocket:
+        websocket.send_json({"type": "authenticate", "token": token})
+        assert websocket.receive_json()["type"] == "authenticated"
+        second = actor.next(
+            "stroke.create", target="offline-2", page=page,
+            payload={"value": {"x": 2}},
+        )
+        submit(client, token, [second])
+        assert websocket.receive_json()["type"] == "operations_changed"
+    state = snapshot(client, token, document)["state"]["pages"][page]
+    assert set(state["objects"]) == {"offline-1", "offline-2"}
