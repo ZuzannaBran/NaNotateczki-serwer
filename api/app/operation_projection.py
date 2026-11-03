@@ -187,7 +187,8 @@ def apply_operation(
     if node is None:
         raise ProjectionError("Object has not been created.")
     if kind.startswith("text."):
-        if node.get("type") != "object.create":
+        if (node.get("type") != "object.create" or
+                node.get("properties", {}).get("objectType") != "text"):
             raise ProjectionError("Text operations require a text object.")
         try:
             apply_text_operation(node, op)
