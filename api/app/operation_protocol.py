@@ -38,6 +38,10 @@ KINDS: dict[str, str] = {
     "folder.set": "folder",
     "folder.move": "folder",
     "folder.delete": "folder",
+    "task.create": "task",
+    "task.set": "task",
+    "task.move": "task",
+    "task.delete": "task",
 }
 
 
@@ -189,13 +193,13 @@ class OperationEnvelope:
             raise InvalidOperation("Page needs objectId but not pageId.")
         if target == "object" and (not self.object_id or not self.page_id):
             raise InvalidOperation("Object needs pageId and objectId.")
-        if target == "folder" and (
+        if target in ("folder", "task") and (
             self.document_id != LIBRARY_DOCUMENT_ID
             or not self.object_id
             or self.page_id is not None
         ):
-            raise InvalidOperation("Folder needs library scope and objectId.")
-        if target != "folder" and self.document_id == LIBRARY_DOCUMENT_ID:
+            raise InvalidOperation("Library entity needs objectId.")
+        if target not in ("folder", "task") and self.document_id == LIBRARY_DOCUMENT_ID:
             raise InvalidOperation("Reserved library namespace.")
 
     def to_dict(self) -> dict[str, Any]:
