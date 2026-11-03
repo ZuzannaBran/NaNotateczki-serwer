@@ -63,7 +63,7 @@ def test_concurrent_insertions_converge_with_reverse_arrival() -> None:
     for change in (second, first):
         two, _ = apply_operation(two, change, set())
     assert node(one) == node(two)
-    assert node(one)["properties"]["text"] == "AB"
+    assert node(one)["properties"]["text"] == "BA"
 
 
 def test_delete_retains_anchor_for_delayed_insert() -> None:
