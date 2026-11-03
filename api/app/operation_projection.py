@@ -25,8 +25,14 @@ def _properties(operation: OperationEnvelope, *, create: bool) -> dict:
         not create and not fields
     ):
         raise ProjectionError(f"Expected exactly one {name} object.")
-    if not create and ("id" in fields or "uid" in fields):
-        raise ProjectionError("Stable IDs cannot be changed by property edits.")
+    if not create and (
+        "id" in fields or "uid" in fields or (
+            operation.kind.startswith("object.") and (
+                "objectType" in fields or "textAtoms" in fields
+            )
+        )
+    ):
+        raise ProjectionError("Identity and CRDT internals cannot be changed.")
     if any(not isinstance(key, str) or not 1 <= len(key) <= 128 for key in fields):
         raise ProjectionError("Invalid property name.")
     if create and "id" in fields:
