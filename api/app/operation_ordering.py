@@ -72,19 +72,21 @@ class OperationActorClock:
     ) -> OperationEnvelope:
         if self.document_id is not None and document_id != self.document_id:
             raise ValueError("Actor cannot cross document scope.")
+        observed = [
+            item for item in self.observed.values()
+            if item.document_id == document_id
+        ]
+        observed_ids = {item.operation_id for item in observed}
+        covered_ids = {
+            dependency for item in observed
+            for dependency in item.dependencies
+            if dependency in observed_ids
+        }
         causal_ids = sorted({
             *dependencies,
-            *(
-                item.operation_id for item in self.observed.values()
-                if item.document_id == document_id
-            ),
-            *(
-                [reverts_operation_id] if reverts_operation_id else []
-            ),
-            *(
-                [self.previous_operation_id]
-                if self.previous_operation_id else []
-            ),
+            *(item for item in observed_ids if item not in covered_ids),
+            *([reverts_operation_id] if reverts_operation_id else []),
+            *([self.previous_operation_id] if self.previous_operation_id else []),
         })
         if (
             len(causal_ids) > 256

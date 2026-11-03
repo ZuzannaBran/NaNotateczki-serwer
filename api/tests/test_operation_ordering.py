@@ -357,3 +357,33 @@ def test_causal_buffer_rejects_cross_document_dependencies_and_actor_moves():
         queue.ingest(wrong_actor)
     assert queue.actor_sequences == {"A": 1}
     assert not queue.pending
+
+
+
+def test_actor_clock_prunes_transitive_observed_frontier():
+    actor = OperationActorClock("local")
+    previous = None
+    for index in range(260):
+        operation_id = f"{index + 1000:08x}-1111-4111-8111-111111111111"
+        remote = OperationEnvelope.from_dict({
+            "schemaVersion": 1,
+            "operationId": operation_id,
+            "actorId": f"remote-{index}",
+            "actorSeq": 1,
+            "documentId": "notebook",
+            "pageId": "page",
+            "objectId": "stroke",
+            "type": "object.set",
+            "payload": {"properties": {"x": index}},
+            "dependencies": [previous] if previous else [],
+            "logicalClock": index + 1,
+        })
+        actor.observe(remote)
+        previous = operation_id
+    next_operation = actor.next(
+        document_id="notebook",
+        kind="object.set", page_id="page", object_id="stroke",
+        payload={"properties": {"x": 999}},
+    )
+    assert next_operation.dependencies == (previous,)
+    assert next_operation.logical_clock == 261
