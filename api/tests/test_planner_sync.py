@@ -105,6 +105,28 @@ def test_delete_is_tombstone_and_old_offline_edit_cannot_resurrect(environment):
     assert result["entries"][0]["deleted"] is True
 
 
+def test_deletion_wins_over_clock_skew_and_stale_resurrection(environment):
+    client, db, _ = environment
+    base = datetime.now(UTC) - timedelta(hours=2)
+    assert write(client, "shared", base, "Original").status_code == 200
+
+    # Device B edits with its clock two hours ahead, before A deletes.
+    ahead = base + timedelta(hours=3)
+    assert write(client, "shared", ahead, "Unsynced B").status_code == 200
+    deleted = write(client, "shared", base + timedelta(minutes=1))
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+    assert datetime.fromisoformat(deleted.json()["modifiedAt"]) > ahead
+
+    commits_after_delete = db.commits
+    # Stale PUTs and even newer timestamps must not resurrect a tombstone.
+    stale = write(client, "shared", ahead + timedelta(hours=1), "Stale B")
+    assert stale.status_code == 200
+    assert stale.json()["deleted"] is True
+    assert db.commits == commits_after_delete
+    assert client.get("/v1/planner/entries").json()["entries"][0]["deleted"]
+
+
 def test_accounts_have_independent_entries(environment):
     client, _, principal = environment
     stamp = datetime.now(UTC)
