@@ -256,13 +256,13 @@ def test_concurrent_plain_text_is_deterministic(client):
             after=[page_op["operationId"]],
         )
         submit(client, token, [created])
-        left = Actor(document, "alice", clock=3).next(
+        left = Actor(document, "alice-" + document, clock=3).next(
             "text.insert", target=text_id, page=page,
             payload={"afterAtomId": None, "atoms": [
                 {"id": str(uuid.uuid4()), "text": "A"},
             ]}, after=[created["operationId"]],
         )
-        right = Actor(document, "bob", clock=3).next(
+        right = Actor(document, "bob-" + document, clock=3).next(
             "text.insert", target=text_id, page=page,
             payload={"afterAtomId": None, "atoms": [
                 {"id": str(uuid.uuid4()), "text": "B"},
