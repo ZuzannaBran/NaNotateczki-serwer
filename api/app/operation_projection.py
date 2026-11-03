@@ -59,6 +59,29 @@ def _merge(node: dict, fields: Mapping, op: OperationEnvelope) -> None:
             properties[key] = value
 
 
+def _validate_folder_graph(folders: dict) -> None:
+    """Reject orphan parents and cycles after deterministic property merges."""
+    checked: set[str] = set()
+    for folder_id in folders:
+        current = folder_id
+        visiting: set[str] = set()
+        while current is not None and current not in checked:
+            if current in visiting:
+                raise ProjectionError("Folder move creates a cycle.")
+            visiting.add(current)
+            node = folders.get(current)
+            if node is None:
+                raise ProjectionError("Folder parent does not exist.")
+            properties = node.get("properties", {})
+            parent = properties.get("parentId")
+            if parent is not None and (
+                not isinstance(parent, str) or not parent
+            ):
+                raise ProjectionError("Invalid folder parent ID.")
+            current = parent
+        checked.update(visiting)
+
+
 def apply_operation(
     current: dict | None,
     op: OperationEnvelope,
@@ -121,6 +144,13 @@ def apply_operation(
             current = {"folders": {}}
         folders = current.setdefault("folders", {})
         if kind == "folder.delete":
+            for folder_id, child in folders.items():
+                if (folder_id != op.object_id and
+                        child.get("properties", {}).get("parentId")
+                        == op.object_id):
+                    raise ProjectionError(
+                        "Folder has children; delete or move them first."
+                    )
             folders.pop(op.object_id, None)
             return current, folder_key if folder_key not in tombstones else None
         if folder_key in tombstones:
@@ -136,6 +166,7 @@ def apply_operation(
         if node is None:
             raise ProjectionError("Folder has not been created.")
         _merge(node, fields, op)
+        _validate_folder_graph(folders)
         return current, None
 
     if current is None:
