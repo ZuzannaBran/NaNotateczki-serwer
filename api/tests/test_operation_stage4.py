@@ -145,8 +145,12 @@ def test_actor_may_not_reuse_sequence_across_unrelated_documents():
     )
 
     class Session:
+        def __init__(self):
+            self.calls = 0
+
         async def scalar(self, statement):
-            return predecessor
+            self.calls += 1
+            return predecessor if self.calls == 2 else None
 
         async def get(self, model, identity):
             return checkpoint
@@ -166,8 +170,12 @@ def test_dependency_must_be_in_the_same_document():
     )
 
     class Session:
+        def __init__(self):
+            self.calls = 0
+
         async def scalar(self, statement):
-            return parent
+            self.calls += 1
+            return parent if self.calls == 2 else None
 
         async def get(self, model, identity):
             return None
