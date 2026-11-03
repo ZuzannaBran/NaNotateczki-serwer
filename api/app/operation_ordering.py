@@ -67,7 +67,13 @@ class OperationActorClock:
     ) -> OperationEnvelope:
         causal_ids = sorted({
             *dependencies,
-            *(item.operation_id for item in self.observed.values()),
+            *(
+                item.operation_id for item in self.observed.values()
+                if item.document_id == document_id
+            ),
+            *(
+                [reverts_operation_id] if reverts_operation_id else []
+            ),
             *(
                 [self.previous_operation_id]
                 if self.previous_operation_id else []

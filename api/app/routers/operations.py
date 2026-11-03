@@ -159,6 +159,18 @@ async def apply_one(
     ):
         raise HTTPException(status_code=409, detail="Invalid actor causality.")
 
+    if checkpoint is not None:
+        predecessor = await session.scalar(
+            select(DocumentOperation).where(
+                DocumentOperation.owner_id == owner_id,
+                DocumentOperation.operation_id == checkpoint.last_operation_id,
+            )
+        )
+        if predecessor is None or predecessor.document_uid != op.document_id:
+            raise HTTPException(
+                status_code=409, detail="Actor crossed document scope."
+            )
+
     for dependency in op.dependencies:
         parent = await session.scalar(
             select(DocumentOperation).where(
@@ -168,6 +180,10 @@ async def apply_one(
         )
         if parent is None:
             return None
+        if parent.document_uid != op.document_id:
+            raise HTTPException(
+                status_code=422, detail="Cross-document causal dependency."
+            )
         if op.logical_clock <= parent.logical_clock:
             raise HTTPException(status_code=422, detail="Invalid logical clock.")
 

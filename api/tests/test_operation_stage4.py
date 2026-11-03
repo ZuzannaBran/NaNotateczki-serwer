@@ -133,6 +133,52 @@ def test_guest_cannot_write_outside_shared_document():
     assert error.value.status_code == 403
 
 
+def test_actor_may_not_reuse_sequence_across_unrelated_documents():
+    owner = principal()
+    predecessor = SimpleNamespace(
+        document_uid="first-document", logical_clock=1,
+    )
+    checkpoint = SimpleNamespace(
+        principal_kind="owner", principal_id=owner.owner_id, share_id=None,
+        last_seq=1, last_operation_id=uuid.UUID(PARENT_ID),
+        last_logical_clock=1,
+    )
+
+    class Session:
+        async def scalar(self, statement):
+            return predecessor
+
+        async def get(self, model, identity):
+            return checkpoint
+
+    next_op = envelope(seq=2, doc="second-document",
+                       dependencies=[PARENT_ID])
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(apply_one(Session(), owner, next_op))
+    assert error.value.status_code == 409
+    assert error.value.detail == "Actor crossed document scope."
+
+
+def test_dependency_must_be_in_the_same_document():
+    owner = principal()
+    parent = SimpleNamespace(
+        document_uid="private-document", logical_clock=1,
+    )
+
+    class Session:
+        async def scalar(self, statement):
+            return parent
+
+        async def get(self, model, identity):
+            return None
+
+    op = envelope(dependencies=[PARENT_ID], operation_id=OP_ID)
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(apply_one(Session(), owner, op))
+    assert error.value.status_code == 422
+    assert error.value.detail == "Cross-document causal dependency."
+
+
 def test_batch_limits_and_strict_envelope():
     with pytest.raises(ValidationError):
         OperationBatch(operations=[])

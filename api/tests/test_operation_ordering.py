@@ -251,6 +251,23 @@ def test_actor_clock_carries_observed_remote_dependencies_across_restart():
     assert {B1, first.operation_id}.issubset(second.dependencies)
 
 
+def test_actor_clock_undo_includes_inverse_and_ignores_other_documents():
+    actor = OperationActorClock("local")
+    remote = op(B1, "remote", 1, 3)
+    other = OperationEnvelope.from_dict({
+        **remote.to_dict(), "operationId": B2,
+        "documentId": "private-document",
+    })
+    actor.observe(other)
+    first = actor.next(
+        document_id="notebook", kind="object.set", page_id="page",
+        object_id="stroke", payload={"properties": {"x": 1}},
+        reverts_operation_id=remote.operation_id,
+    )
+    assert remote.operation_id in first.dependencies
+    assert B2 not in first.dependencies
+
+
 def test_actor_clock_does_not_advance_on_unsafe_dependency_limit():
     actor = OperationActorClock("local")
     for index in range(257):
