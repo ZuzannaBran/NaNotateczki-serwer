@@ -1,7 +1,7 @@
 """Deterministic, JSON-safe v2 projection with permanent entity tombstones.
 
-Text atom and asset reducers are intentionally NOT accepted until their
-independent validation/storage contracts are implemented (stages 6 and 9).
+Text atoms use deterministic RGA ordering. Assets still require a separate
+verified transport before they can be enabled.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 
 from .operation_ordering import precedence
 from .operation_protocol import LIBRARY_DOCUMENT_ID, OperationEnvelope
+from .text_sequence import TextSequenceError, apply_text_operation
 
 
 class ProjectionError(ValueError):
@@ -63,14 +64,16 @@ def apply_operation(
     and appends the operation in ONE PostgreSQL transaction.
     """
     kind = op.kind
-    if kind.startswith("text.") or kind.startswith("asset."):
-        raise ProjectionError("Text and asset reducers are not enabled in v2 yet.")
+    if kind.startswith("asset."):
+        raise ProjectionError("Asset reducers are not enabled in v2 yet.")
     if kind == "stroke.create":
         is_create = True
     else:
         is_create = kind.endswith(".create")
-    is_delete = kind.endswith(".delete")
-    if is_delete:
+    is_delete = kind.endswith(".delete") and not kind.startswith("text.")
+    if kind.startswith("text."):
+        fields = None
+    elif is_delete:
         if op.to_dict()["payload"]:
             raise ProjectionError("Delete operations require empty payload.")
     elif is_create:
@@ -183,5 +186,15 @@ def apply_operation(
         objects[op.object_id] = node
     if node is None:
         raise ProjectionError("Object has not been created.")
+    if kind.startswith("text."):
+        if node.get("type") != "object.create":
+            raise ProjectionError("Text operations require a text object.")
+        try:
+            apply_text_operation(node, op)
+        except TextSequenceError as exc:
+            raise ProjectionError(str(exc)) from exc
+        return current, None
+    if "textAtoms" in node and "text" in fields:
+        raise ProjectionError("CRDT text cannot be replaced by object.set.")
     _merge(node, fields, op)
     return current, None
