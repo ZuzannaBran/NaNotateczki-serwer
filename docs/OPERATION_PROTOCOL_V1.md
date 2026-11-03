@@ -88,6 +88,20 @@ Text concurrent-insert positioning needs a tested sequence CRDT/OT reducer
 (stage 6); this model does not pretend a generic property LWW reducer can
 merge arbitrary Quill deltas.
 
+## Document-scoped actors and Share v2
+
+A v2 actor identity is bound to one account/share principal and one document.
+An actor must not reuse its actorSeq stream for another document. Client
+SyncEngine creates a stable actorId hash using its actor identity, checkpoint
+namespace and documentId. Direct dependencies must belong to the same
+document; dependencies on unrelated owner documents would be invisible to a
+Share guest. Undo/Redo must include revertsOperationId in dependencies.
+
+Share REST operations use X-Share-Id with the guest ticket. The v2 WebSocket
+authenticate message uses shareId with the same ticket. These transport
+capabilities do not activate production Share until client reducers and
+the v1→v2 migration are ready.
+
 ## Causality and conflict policy
 
 1. Deduplicate by `operationId`. Same ID with changed content is rejected.
