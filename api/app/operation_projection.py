@@ -114,6 +114,7 @@ def apply_operation(
     page_key = ("page", "", op.page_id or op.object_id or "")
     object_key = ("object", op.page_id or "", op.object_id or "")
     folder_key = ("folder", "", op.object_id or "")
+    task_key = ("task", "", op.object_id or "")
 
     if kind.startswith("document."):
         if kind == "document.create":
@@ -167,6 +168,42 @@ def apply_operation(
             raise ProjectionError("Folder has not been created.")
         _merge(node, fields, op)
         _validate_folder_graph(folders)
+        return current, None
+
+    if kind.startswith("task."):
+        if op.document_id != LIBRARY_DOCUMENT_ID:
+            raise ProjectionError("Task outside library scope.")
+        if current is None:
+            if kind != "task.create" and not is_delete:
+                raise ProjectionError("Library has not been created.")
+            current = {"folders": {}, "tasks": {}}
+        tasks = current.setdefault("tasks", {})
+        if kind == "task.delete":
+            tasks.pop(op.object_id, None)
+            return current, task_key if task_key not in tombstones else None
+        if task_key in tombstones:
+            if is_create:
+                raise ProjectionError("Task ID was deleted.")
+            return current, None
+        node = tasks.get(op.object_id)
+        if is_create:
+            if node is not None:
+                raise ProjectionError("Task ID already used.")
+            node = _new_node()
+            tasks[op.object_id] = node
+        if node is None:
+            raise ProjectionError("Task has not been created.")
+        if is_create and (
+            not isinstance(fields.get("plannerUid"), str)
+            or not fields["plannerUid"]
+        ):
+            raise ProjectionError("Task needs a plannerUid.")
+        if "plannerUid" in fields and (
+            not isinstance(fields["plannerUid"], str)
+            or not fields["plannerUid"]
+        ):
+            raise ProjectionError("Invalid task plannerUid.")
+        _merge(node, fields, op)
         return current, None
 
     if current is None:
