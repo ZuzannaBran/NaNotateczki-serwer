@@ -90,6 +90,7 @@ async def put_entry(
         raise HTTPException(status_code=422, detail="Planner entry ID mismatch")
     await lock_owner_events(session, user.id)
     record = await session.get(PlannerEntry, (user.id, uid))
+    created = record is None
     if record is not None:
         # An acknowledged deletion is permanent for this UID. A stale device
         # must create a new entry with a new UID rather than resurrect this one.
@@ -107,12 +108,11 @@ async def put_entry(
         modified_at = body.modifiedAt
         record = PlannerEntry(
             owner_id=user.id, uid=uid, content=None,
-            modified_at=modified_at, deleted=True,
+            modified_at=modified_at, deleted=True, revision=1,
         )
         session.add(record)
-    record.revision = (record.revision or 0) + (
-        0 if record in session.new else 1
-    )
+    if not created:
+        record.revision = (record.revision or 1) + 1
     record.modified_at = modified_at
     record.content = None if body.deleted else body.entry
     record.deleted = body.deleted
