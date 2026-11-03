@@ -8,7 +8,7 @@ import pytest
 
 from app.operation_projection import ProjectionError, apply_operation
 from app.operation_protocol import OperationEnvelope
-from app.text_sequence import TextSequenceError, apply_text_operation, render_text
+from app.text_sequence import TextSequenceError, render_text
 
 
 DOC = "doc-stage-six"
@@ -66,7 +66,6 @@ def test_concurrent_insertions_converge_with_reverse_arrival() -> None:
     assert node(one)["properties"]["text"] == "BA"
 
 
-
 def test_later_insert_at_caret_precedes_existing_successor() -> None:
     state = initial_state()
     first = operation("text.insert", {
@@ -79,6 +78,7 @@ def test_later_insert_at_caret_precedes_existing_successor() -> None:
     state, _ = apply_operation(state, first, set())
     state, _ = apply_operation(state, caret, set())
     assert node(state)["properties"]["text"] == "AXB"
+
 
 def test_delete_retains_anchor_for_delayed_insert() -> None:
     state = initial_state()
