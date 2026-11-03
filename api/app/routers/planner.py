@@ -24,6 +24,7 @@ def record_json(record: PlannerEntry) -> dict:
         "id": record.uid,
         "modifiedAt": record.modified_at.astimezone(UTC).isoformat(),
         "deleted": record.deleted,
+        "revision": record.revision or 1,
         "entry": None if record.deleted else record.content,
     }
 
@@ -109,6 +110,9 @@ async def put_entry(
             modified_at=modified_at, deleted=True,
         )
         session.add(record)
+    record.revision = (record.revision or 0) + (
+        0 if record in session.new else 1
+    )
     record.modified_at = modified_at
     record.content = None if body.deleted else body.entry
     record.deleted = body.deleted
