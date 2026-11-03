@@ -67,6 +67,11 @@ def test_every_operation_kind_has_a_target():
         {"type": "page.create", "objectId": "page-1", "pageId": ""},
         {"operationId": "not-a-uuid"},
         {"payload": {"bad": float("nan")}},
+        {"actorId": "actor\nspoof"},
+        {"documentId": "doc\u0000bad"},
+        {"pageId": "p" * 129},
+        {"objectId": "x\u007f"},
+        {"revertsOperationId": SECOND},
     ],
 )
 def test_rejects_malformed_or_unsafe_operations(changes):

@@ -33,6 +33,7 @@ app.add_middleware(
         "Content-Type",
         "Idempotency-Key",
         "X-Content-SHA256",
+        "X-Share-Id",
         "X-Request-ID",
     ],
 )

@@ -56,3 +56,24 @@ def test_password_change_rejects_short_new_password() -> None:
         assert error.errors()[0]["loc"] == ("newPassword",)
     else:
         raise AssertionError("A short new password must be rejected")
+
+
+
+def test_v2_share_preflight_allows_guest_ticket_header() -> None:
+    from app.settings import get_settings
+
+    origin = str(get_settings().app_origin).rstrip("/")
+    with TestClient(app) as client:
+        response = client.options(
+            "/v2/operations/batch",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers":
+                    "authorization,content-type,x-share-id",
+            },
+        )
+    assert response.status_code == 200
+    assert "x-share-id" in response.headers[
+        "access-control-allow-headers"
+    ].lower()

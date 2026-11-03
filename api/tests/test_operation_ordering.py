@@ -297,3 +297,63 @@ def test_rejected_id_survives_checkpoint_and_cannot_be_reused():
     with pytest.raises(OperationOrderError):
         restored.ingest(op(B1, "B", 1, 3, deps=[A1]))
     assert restored.ingest(op(B2, "B", 1, 3, deps=[A1]))
+
+
+
+def test_actor_clock_binds_document_across_checkpoint_restart():
+    actor = OperationActorClock("local")
+    first = actor.next(
+        document_id="notebook", kind="object.set", page_id="page",
+        object_id="stroke", payload={"properties": {"x": 1}},
+    )
+    assert actor.document_id == "notebook"
+    checkpoint = actor.to_checkpoint()
+    assert checkpoint["documentId"] == "notebook"
+    resumed = OperationActorClock.from_checkpoint(checkpoint)
+    with pytest.raises(ValueError, match="document scope"):
+        resumed.next(
+            document_id="private-document", kind="object.set", page_id="page",
+            object_id="stroke", payload={"properties": {"x": 2}},
+        )
+    foreign = OperationEnvelope.from_dict({
+        **op(B1, actor="foreign", clock=25).to_dict(),
+        "documentId": "private-document",
+    })
+    resumed.observe(foreign)
+    second = resumed.next(
+        document_id="notebook", kind="object.set", page_id="page",
+        object_id="stroke", payload={"properties": {"x": 2}},
+    )
+    assert second.dependencies == (first.operation_id,)
+
+
+def test_actor_clock_rejects_unscoped_old_nonempty_checkpoint():
+    actor = OperationActorClock("local")
+    actor.next(
+        document_id="notebook", kind="object.set", page_id="page",
+        object_id="stroke", payload={"properties": {"x": 1}},
+    )
+    checkpoint = actor.to_checkpoint()
+    del checkpoint["documentId"]
+    with pytest.raises(ValueError, match="Invalid actor checkpoint"):
+        OperationActorClock.from_checkpoint(checkpoint)
+
+
+def test_causal_buffer_rejects_cross_document_dependencies_and_actor_moves():
+    first = op(A1)
+    queue = CausalOperationBuffer()
+    assert queue.ingest(first) == [first]
+    wrong_dependency = OperationEnvelope.from_dict({
+        **op(B1, actor="B", clock=2, deps=[A1]).to_dict(),
+        "documentId": "another-document",
+    })
+    with pytest.raises(OperationOrderError, match="Cross-document"):
+        queue.ingest(wrong_dependency)
+    wrong_actor = OperationEnvelope.from_dict({
+        **op(A2, actor="A", sequence=2, clock=2, deps=[A1]).to_dict(),
+        "documentId": "another-document",
+    })
+    with pytest.raises(OperationOrderError, match="actor causality"):
+        queue.ingest(wrong_actor)
+    assert queue.actor_sequences == {"A": 1}
+    assert not queue.pending

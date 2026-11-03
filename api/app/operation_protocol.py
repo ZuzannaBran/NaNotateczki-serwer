@@ -12,6 +12,7 @@ from typing import Any
 SCHEMA_VERSION = 1
 MAX_SAFE_INTEGER = 9007199254740991
 LIBRARY_DOCUMENT_ID = "@library"
+_INVALID_ID_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 _UUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -161,8 +162,20 @@ class OperationEnvelope:
             or len(set(self.dependencies)) != len(self.dependencies)
             or self.operation_id in self.dependencies
             or any(not _UUID.fullmatch(item) for item in self.dependencies)
+            or (
+                self.reverts_operation_id is not None
+                and self.reverts_operation_id not in self.dependencies
+            )
         ):
             raise InvalidOperation("Invalid causal dependencies.")
+        for identifier in (
+            self.actor_id, self.document_id, self.page_id, self.object_id
+        ):
+            if identifier is not None and (
+                len(identifier) > 128
+                or _INVALID_ID_CHARACTER.search(identifier) is not None
+            ):
+                raise InvalidOperation("Invalid target identifier.")
         target = KINDS.get(self.kind)
         if target is None:
             raise InvalidOperation("Unknown operation type.")

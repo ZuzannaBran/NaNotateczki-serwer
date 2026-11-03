@@ -34,6 +34,7 @@ class OperationActorClock:
     logical_clock: int = 0
     previous_operation_id: str | None = None
     observed: dict[str, OperationEnvelope] = field(default_factory=dict)
+    document_id: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -42,11 +43,15 @@ class OperationActorClock:
             or not 0 <= self.actor_seq <= MAX_SAFE_INTEGER
             or not 0 <= self.logical_clock <= MAX_SAFE_INTEGER
             or (self.actor_seq > 0 and not self.previous_operation_id)
+            or (self.actor_seq > 0 and not self.document_id)
+            or (self.document_id is not None and not 1 <= len(self.document_id) <= 128)
         ):
             raise ValueError("Invalid actor clock.")
 
     def observe(self, remote: OperationEnvelope) -> None:
         """Call after applying a committed remote operation."""
+        if self.document_id is not None and remote.document_id != self.document_id:
+            return
         if remote.actor_id != self.actor_id:
             old = self.observed.get(remote.actor_id)
             if (
@@ -65,6 +70,8 @@ class OperationActorClock:
         reverts_operation_id: str | None = None,
         dependencies: tuple[str, ...] = (),
     ) -> OperationEnvelope:
+        if self.document_id is not None and document_id != self.document_id:
+            raise ValueError("Actor cannot cross document scope.")
         causal_ids = sorted({
             *dependencies,
             *(
@@ -103,6 +110,11 @@ class OperationActorClock:
         self.actor_seq = op.actor_seq
         self.logical_clock = op.logical_clock
         self.previous_operation_id = op.operation_id
+        self.document_id = document_id
+        self.observed = {
+            actor: remote for actor, remote in self.observed.items()
+            if remote.document_id == document_id
+        }
         return op
 
     def to_checkpoint(self) -> dict:
@@ -112,6 +124,8 @@ class OperationActorClock:
             "logicalClock": self.logical_clock,
             **({"previousOperationId": self.previous_operation_id}
                if self.previous_operation_id is not None else {}),
+            **({"documentId": self.document_id}
+               if self.document_id is not None else {}),
             "observedOperations": [
                 item.to_dict() for item in self.observed.values()
             ],
@@ -125,6 +139,7 @@ class OperationActorClock:
                 actor_seq=raw["actorSeq"],
                 logical_clock=raw["logicalClock"],
                 previous_operation_id=raw.get("previousOperationId"),
+                document_id=raw.get("documentId"),
             )
             for item in raw.get("observedOperations", []):
                 remote = OperationEnvelope.from_dict(item)
@@ -332,6 +347,7 @@ class CausalOperationBuffer:
                     if last is not None and (
                         last.operation_id not in candidate.dependencies
                         or candidate.logical_clock <= last.logical_clock
+                        or candidate.document_id != last.document_id
                     ):
                         raise OperationOrderError("Invalid actor causality.")
                     for parent_id in candidate.dependencies:
@@ -339,6 +355,10 @@ class CausalOperationBuffer:
                         if parent is None:
                             raise OperationOrderError(
                                 "Unverifiable dependency in checkpoint."
+                            )
+                        if candidate.document_id != parent.document_id:
+                            raise OperationOrderError(
+                                "Cross-document causal dependency."
                             )
                         if candidate.logical_clock <= parent.logical_clock:
                             raise OperationOrderError("Invalid logical clock.")

@@ -95,11 +95,16 @@ merge arbitrary Quill deltas.
 ## Document-scoped actors and Share v2
 
 A v2 actor identity is bound to one account/share principal and one document.
+The pure actor clock records `documentId` in its checkpoint after its first
+local edit and rejects a different document after restart. An old nonempty
+checkpoint without a document binding must be migrated, not guessed.
 An actor must not reuse its actorSeq stream for another document. Client
 SyncEngine creates a stable actorId hash using its actor identity, checkpoint
 namespace and documentId. Direct dependencies must belong to the same
 document; dependencies on unrelated owner documents would be invisible to a
 Share guest. Undo/Redo must include revertsOperationId in dependencies.
+The Python and Dart envelope validators reject missing inverse dependencies,
+control characters and identifiers over 128 characters.
 
 Share REST operations use X-Share-Id with the guest ticket. The v2 WebSocket
 authenticate message uses shareId with the same ticket. These transport
