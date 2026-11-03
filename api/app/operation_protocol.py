@@ -199,7 +199,10 @@ class OperationEnvelope:
             or self.page_id is not None
         ):
             raise InvalidOperation("Library entity needs objectId.")
-        if target not in ("folder", "task") and self.document_id == LIBRARY_DOCUMENT_ID:
+        if (
+            target not in ("folder", "task")
+            and self.document_id == LIBRARY_DOCUMENT_ID
+        ):
             raise InvalidOperation("Reserved library namespace.")
 
     def to_dict(self) -> dict[str, Any]:
