@@ -1,5 +1,6 @@
 """Expiry and revocation semantics for v2 Share operation credentials."""
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -42,7 +43,6 @@ def _objects(*, grant_expired=False, share_expired=False, revoked=False):
     return share, grant
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "options",
     [
@@ -51,27 +51,29 @@ def _objects(*, grant_expired=False, share_expired=False, revoked=False):
         {"revoked": True},
     ],
 )
-async def test_valid_but_expired_or_revoked_ticket_is_terminal(options):
+def test_valid_but_expired_or_revoked_ticket_is_terminal(options):
     share, grant = _objects(**options)
     with pytest.raises(HTTPException) as error:
-        await authorize(_ShareSession(share, grant), "Bearer " + "s" * 40, share.id)
+        asyncio.run(authorize(
+            _ShareSession(share, grant), "Bearer " + "s" * 40, share.id,
+        ))
     assert error.value.status_code == 410
 
 
-@pytest.mark.asyncio
-async def test_unknown_ticket_remains_unauthorized():
+def test_unknown_ticket_remains_unauthorized():
     share, _ = _objects()
     with pytest.raises(HTTPException) as error:
-        await authorize(_ShareSession(share, None), "Bearer " + "s" * 40, share.id)
+        asyncio.run(authorize(
+            _ShareSession(share, None), "Bearer " + "s" * 40, share.id,
+        ))
     assert error.value.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_live_share_ticket_grants_only_its_document():
+def test_live_share_ticket_grants_only_its_document():
     share, grant = _objects()
-    principal = await authorize(
+    principal = asyncio.run(authorize(
         _ShareSession(share, grant), "Bearer " + "s" * 40, share.id,
-    )
+    ))
     assert principal.kind == "share"
     assert principal.share_id == share.id
     assert principal.document_uid == share.document_uid
