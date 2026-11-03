@@ -126,7 +126,7 @@ def test_snapshot_frontier_and_queue_limit():
         checkpoint, maximum_pending=1
     )
     with pytest.raises(OperationOrderError):
-        queue.ingest(op(A1))
+        queue.ingest(op(B2, "A", 1, 1))
     assert queue.ingest(op(B1, "A", 4, 4)) == []
     with pytest.raises(OperationOrderError):
         queue.ingest(op(B2, "B", 2, 4))
