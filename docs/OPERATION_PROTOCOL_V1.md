@@ -1,8 +1,10 @@
 # Operation Protocol v1 — NaNotateczki
 
-Status: **defined, inactive**. This is the shared contract for the future
-operation-based account synchronization and Share implementation. The current
-v1 snapshot/backup API remains active until stages 3–6 and migration in stage 11.
+Status: **protocol defined; backend v2 staged, clients not switched**.
+Stage 4 adds transactional PostgreSQL persistence and v2 read/write/WebSocket
+endpoints. Legacy snapshot/backup and Share APIs stay active until the
+controlled client migration and rollout. See
+[OPERATIONS_V2_BACKEND.md](OPERATIONS_V2_BACKEND.md).
 
 ## Scope and identity
 

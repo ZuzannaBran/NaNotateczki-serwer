@@ -127,3 +127,33 @@ testów Flutter, rzeczywistego PostgreSQL ani przeglądarek.
 
 Zmiany obejmują testy regresyjne, ale wykonanie `pytest`, `flutter test`,
 PostgreSQL i testów przeglądarek pozostaje **niepotwierdzone**.
+
+## Stage 4 — operation journal (opt-in, not live yet)
+
+- Pure projection regressions:
+  `api/tests/test_operation_projection.py` checks independent ink, scalar
+  convergence, permanent deletion of object/page/folder/document IDs,
+  immutable deletion payloads, and explicit rejection of rich-text/assets.
+- Transaction-boundary unit regressions:
+  `api/tests/test_operation_stage4.py` checks idempotent HTTP retries, actor
+  identity binding, causal gaps and sequence forks without database writes.
+- Legacy dual-writer protection:
+  `api/tests/test_operation_legacy_guard.py` checks v1 PUT and DELETE reject
+  a document already materialized by v2.
+- Existing `test_study_shares_flow.py` mocks account for the new v2 lookup.
+
+Run locally when dependencies are available:
+
+```bash
+cd api
+python -m pytest -q tests/test_operation_projection.py \
+  tests/test_operation_stage4.py \
+  tests/test_operation_legacy_guard.py \
+  tests/test_study_shares_flow.py
+```
+
+**Not yet verified here:** PostgreSQL `0010` migration against existing
+data, concurrent real transactions, response-loss retries across a process
+crash, WebSocket reconnection and live two-device convergence. Those require
+the actual DB/WebSocket integration environment and must pass before enabling
+v2 for production data. No GitHub Actions run is part of stage 4.

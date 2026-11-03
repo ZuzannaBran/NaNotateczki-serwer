@@ -183,3 +183,95 @@ class PlannerEntry(Base):
         DateTime(timezone=True), nullable=False
     )
     deleted: Mapped[bool] = mapped_column(nullable=False, default=False)
+
+class DocumentState(Base):
+    """Materialized v2 projection, separate from legacy synced_notebooks."""
+
+    __tablename__ = "document_states"
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    document_uid: Mapped[str] = mapped_column(String(128), primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    content: Mapped[dict | None] = mapped_column(JSONB)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DocumentOperation(Base):
+    """Committed immutable operation. cursor orders transactions per owner."""
+
+    __tablename__ = "document_operations"
+
+    cursor: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    operation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), unique=True, nullable=False
+    )
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    document_uid: Mapped[str] = mapped_column(String(128), nullable=False)
+    op_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    logical_clock: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    envelope: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ActorCheckpoint(Base):
+    """Identity-bound actor frontier, never driven by wall-clock time."""
+
+    __tablename__ = "actor_checkpoints"
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    actor_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    principal_kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    principal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    share_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    last_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    last_operation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    last_logical_clock: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class ObjectTombstone(Base):
+    """Persistent deletion marker; recreating a deleted ID is forbidden."""
+
+    __tablename__ = "object_tombstones"
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    document_uid: Mapped[str] = mapped_column(String(128), primary_key=True)
+    target_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    page_id: Mapped[str] = mapped_column(
+        String(128), primary_key=True, default=""
+    )
+    object_id: Mapped[str] = mapped_column(
+        String(128), primary_key=True, default=""
+    )
+    deleted_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("document_operations.operation_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

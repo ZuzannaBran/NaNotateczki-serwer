@@ -14,7 +14,10 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.database import database_session
 from app.main import app
-from app.models import ChangeEvent, StudyShare, StudyShareGrant, SyncedNotebook, User
+from app.models import (
+    ChangeEvent, DocumentState, StudyShare, StudyShareGrant,
+    SyncedNotebook, User,
+)
 from app.realtime_hub import RealtimeHub
 from app.routers import study_shares as shares
 from app.security import current_user
@@ -839,6 +842,8 @@ def test_owner_change_feed_contains_merged_guest_strokes(monkeypatch):
     class OwnerSession:
         async def scalar(self, statement):
             entity = statement.column_descriptions[0]["entity"]
+            if entity is DocumentState:
+                return None
             return original if entity is ChangeEvent else share
 
         async def execute(self, _statement):
@@ -949,7 +954,9 @@ def test_deleting_shared_notebook_revokes_guest_access(monkeypatch):
     notifications = []
 
     class Session:
-        async def scalar(self, _query):
+        async def scalar(self, query):
+            if query.column_descriptions[0]["entity"] is DocumentState:
+                return None
             return share
 
         async def execute(self, _query):

@@ -8,7 +8,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import database_session
-from ..models import ChangeEvent, IdempotencyRecord, StudyShare, SyncedNotebook, User
+from ..models import (
+    ChangeEvent, DocumentState, IdempotencyRecord, StudyShare,
+    SyncedNotebook, User,
+)
 from ..realtime_hub import hub
 from ..schemas import DeleteWrite, SyncWrite
 from ..security import current_user
@@ -156,6 +159,18 @@ async def put_notebook(
     previous = await idempotent_response(session, user.id, idempotency_key, request_hash)
     if previous is not None:
         return previous
+    # Once a UID uses the operation journal, a stale v1 snapshot cannot
+    # overwrite or resurrect it. Both protocols take the account write lock.
+    v2_state = await session.scalar(
+        select(DocumentState.revision).where(
+            DocumentState.owner_id == user.id,
+            DocumentState.document_uid == uid,
+        )
+    )
+    if v2_state is not None:
+        raise HTTPException(
+            status_code=409, detail="Document uses operation API v2."
+        )
     # Shared edits use one ordering rule for owners and invited guests.
     # Keep lock order: owner, share, notebook.
     active_share = await session.scalar(
@@ -255,6 +270,18 @@ async def delete_notebook(
     previous = await idempotent_response(session, user.id, idempotency_key, request_hash)
     if previous is not None:
         return previous
+    # Once a UID uses the operation journal, a stale v1 snapshot cannot
+    # overwrite or resurrect it. Both protocols take the account write lock.
+    v2_state = await session.scalar(
+        select(DocumentState.revision).where(
+            DocumentState.owner_id == user.id,
+            DocumentState.document_uid == uid,
+        )
+    )
+    if v2_state is not None:
+        raise HTTPException(
+            status_code=409, detail="Document uses operation API v2."
+        )
     active_share = await session.scalar(
         select(StudyShare).where(
             StudyShare.owner_id == user.id,
