@@ -45,7 +45,9 @@ def test_every_operation_kind_has_a_target():
             fields.update(objectId="page-1", pageId=None)
         elif target == "folder":
             fields.update(documentId="@library", objectId="folder-1", pageId=None)
-        assert OperationEnvelope.from_dict(sample(**fields)).kind == kind
+        assert (
+            OperationEnvelope.from_dict(sample(**fields)).kind == kind
+        )
 
 
 @pytest.mark.parametrize(
