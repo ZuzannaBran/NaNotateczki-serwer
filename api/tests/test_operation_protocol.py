@@ -61,6 +61,8 @@ def test_every_operation_kind_has_a_target():
         {"logicalClock": 9007199254740992},
         {"logicalClock": -1},
         {"pageId": None},
+        {"type": "document.delete", "objectId": "", "pageId": None},
+        {"type": "page.create", "objectId": "page-1", "pageId": ""},
         {"operationId": "not-a-uuid"},
         {"payload": {"bad": float("nan")}},
     ],

@@ -42,7 +42,9 @@ KINDS: dict[str, str] = {
 
 def _freeze(value: Any) -> Any:
     if isinstance(value, dict):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+        return MappingProxyType({
+            key: _freeze(item) for key, item in value.items()
+        })
     if isinstance(value, list):
         return tuple(_freeze(item) for item in value)
     return value
@@ -164,16 +166,20 @@ class OperationEnvelope:
         target = KINDS.get(self.kind)
         if target is None:
             raise InvalidOperation("Unknown operation type.")
-        if target == "document" and (self.object_id or self.page_id):
+        if target == "document" and (
+            self.object_id is not None or self.page_id is not None
+        ):
             raise InvalidOperation("Document operation has no child ID.")
-        if target == "page" and (not self.object_id or self.page_id):
+        if target == "page" and (
+            not self.object_id or self.page_id is not None
+        ):
             raise InvalidOperation("Page needs objectId but not pageId.")
         if target == "object" and (not self.object_id or not self.page_id):
             raise InvalidOperation("Object needs pageId and objectId.")
         if target == "folder" and (
             self.document_id != LIBRARY_DOCUMENT_ID
             or not self.object_id
-            or self.page_id
+            or self.page_id is not None
         ):
             raise InvalidOperation("Folder needs library scope and objectId.")
         if target != "folder" and self.document_id == LIBRARY_DOCUMENT_ID:
