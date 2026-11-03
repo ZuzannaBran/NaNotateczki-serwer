@@ -1,4 +1,5 @@
 import re
+import time
 import uuid
 
 from fastapi import FastAPI, Request
@@ -73,6 +74,13 @@ async def security_boundary(request: Request, call_next):
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": "nanotateczki-api"}
+
+
+@app.get("/v1/time")
+async def server_time() -> dict:
+    # Unix UTC epoch milliseconds, independent of the server's timezone.
+    # The client compares this against its monotonic request midpoint.
+    return {"serverTimeMs": time.time_ns() // 1_000_000}
 
 
 @app.get("/ready")
