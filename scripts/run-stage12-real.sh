@@ -76,7 +76,7 @@ esac
   tests/test_stage12_real_stack.py "${selection[@]}")
 
 # Optional full Flutter -> FastAPI -> PostgreSQL -> WebSocket test.
-if [[ -n "$NN_STAGE12_FLUTTER_ROOT" ]]; then
+if [[ -n "${NN_STAGE12_FLUTTER_ROOT:-}" ]]; then
   if ! command -v flutter >/dev/null 2>&1; then
     echo "Flutter SDK required for optional client E2E" >&2
     exit 2
