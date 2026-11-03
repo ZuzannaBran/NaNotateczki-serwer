@@ -39,7 +39,9 @@ def initial_state() -> dict:
                     object_id=None, page_id=None)
     page = operation("page.create", {"value": {"title": "Page"}},
                      object_id=PAGE, page_id=None)
-    text = operation("object.create", {"value": {"text": "", "width": 200}})
+    text = operation("object.create", {"value": {
+        "objectType": "text", "text": "", "width": 200,
+    }})
     state, _ = apply_operation(None, doc, set())
     state, _ = apply_operation(state, page, set())
     state, _ = apply_operation(state, text, set())
@@ -155,6 +157,19 @@ def test_text_graph_rejects_cycles() -> None:
     }
     with pytest.raises(TextSequenceError, match="Unreachable"):
         render_text(atoms)
+
+
+
+def test_nontext_objects_reject_crdt_text_operations() -> None:
+    state = initial_state()
+    node(state)["properties"]["objectType"] = "image"
+    with pytest.raises(ProjectionError, match="text object"):
+        apply_operation(
+            state, operation("text.insert", {
+                "afterAtomId": None,
+                "atoms": [{"id": A, "text": "bad"}],
+            }), set(),
+        )
 
 
 def test_existing_plain_text_requires_explicit_migration() -> None:
