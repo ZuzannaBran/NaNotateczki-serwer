@@ -119,8 +119,9 @@ The pure buffer uses copy-on-write staging. An invalid incoming operation
 never partially advances the accepted frontier. If an older buffered operation
 becomes invalid when its parent arrives, that buffered operation is isolated
 in a diagnostic `rejected` map and its reserved sequence is released; the
-valid parent is still returned for application. A correction must carry a
-new `operationId` because operation IDs identify immutable intents.
+valid parent is still returned for application. Rejected IDs and reasons
+are retained in a lossless checkpoint. A correction must carry a new
+`operationId` because operation IDs identify immutable intents.
 Dependents of a rejected ID stay blocked until explicitly reconciled.
 
 `OperationCheckpoint` deliberately retains complete accepted envelopes,
