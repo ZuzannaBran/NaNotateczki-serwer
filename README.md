@@ -178,9 +178,15 @@ Wykonaj `scripts/apply-migrations.sh` przed restartem API. Endpoints
 `GET /v1/planner/entries?after=<uid>` (strony po 200) i
 `PUT /v1/planner/entries/<uid>` wymagają tokenu właściciela.
 Zapis jest atomowy, obejmuje osobne wydarzenia i Study Sessions oraz
-trwałe tombstones po usunięciu. `modifiedAt` z lokalnego zegara UTC
-rozstrzyga późniejsze edycje tego samego wpisu; serwer odrzuca starszą
-wersję. Po commicie publikuje `planner_changed` przez WebSocket.
-Po utracie połączenia klient pobiera ponownie pełne strony i uzgadnia
-stan, zachowując zmiany offline. Poprawność kolejności między offline
-urządzeniami zależy od ich zsynchronizowanych zegarów.
+trwałe tombstones po usunięciu. Potwierdzone usunięcie wygrywa z
+niezsynchronizowaną edycją innego urządzenia, także gdy jego zegar jest
+ustawiony w przyszłość. Usuniętego ID nie można przywrócić przez PUT,
+nawet używając historycznej flagi `restoreDeleted` w synchronizacji notatek.
+Dla dwóch aktywnych edycji jednego wpisu `modifiedAt` nadal pochodzi
+z zegara UTC klienta; poprawna kolejność wymaga zsynchronizowanych zegarów
+lub przyszłego CAS per wpis. UTC usuwa różnice stref, ale nie offset zegara.
+Po commicie publikuje `planner_changed` przez WebSocket.
+Backup `verifiedAt` oznacza wyłącznie weryfikację archiwum: nie wolno
+używać go do rozstrzygania kolejności edycji ani do przywracania tombstones.
+Po utracie połączenia klient pobiera pełny stan serwera i uzgadnia go
+z trwałymi lokalnymi zmianami offline.
