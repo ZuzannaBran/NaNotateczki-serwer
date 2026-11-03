@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
+from types import MappingProxyType
 from dataclasses import dataclass
 from typing import Any
 
 SCHEMA_VERSION = 1
+MAX_SAFE_INTEGER = 9007199254740991
 LIBRARY_DOCUMENT_ID = "@library"
 _UUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
@@ -35,6 +38,22 @@ KINDS: dict[str, str] = {
     "folder.move": "folder",
     "folder.delete": "folder",
 }
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _thaw(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
+    return value
 
 
 class InvalidOperation(ValueError):
@@ -76,7 +95,7 @@ class OperationEnvelope:
                 raise InvalidOperation("Payload must be an object.")
             # Make this envelope independent from the mutable caller dictionary.
             serialized = json.dumps(payload, allow_nan=False)
-            payload = json.loads(serialized)
+            payload = _freeze(json.loads(serialized))
             values = (
                 raw["operationId"], raw["actorId"], raw["documentId"],
                 raw["type"],
@@ -84,7 +103,11 @@ class OperationEnvelope:
             if not all(isinstance(value, str) for value in values):
                 raise InvalidOperation("Identifiers and type must be strings.")
             for key in ("objectId", "pageId", "revertsOperationId"):
-                if key in raw and raw[key] is not None and not isinstance(raw[key], str):
+                if (
+                    key in raw
+                    and raw[key] is not None
+                    and not isinstance(raw[key], str)
+                ):
                     raise InvalidOperation(f"Invalid optional field: {key}")
             op = cls(
                 operation_id=raw["operationId"],
@@ -124,11 +147,13 @@ class OperationEnvelope:
             or not isinstance(self.document_id, str)
             or not 1 <= len(self.document_id) <= 128
             or type(self.actor_seq) is not int
-            or self.actor_seq < 1
+            or not 1 <= self.actor_seq <= MAX_SAFE_INTEGER
             or type(self.logical_clock) is not int
-            or self.logical_clock < 1
+            or not 1 <= self.logical_clock <= MAX_SAFE_INTEGER
         ):
-            raise InvalidOperation("Invalid actor, document, sequence or clock.")
+            raise InvalidOperation(
+                "Invalid actor, document, sequence or clock."
+            )
         if (
             len(self.dependencies) > 256
             or len(set(self.dependencies)) != len(self.dependencies)
@@ -162,7 +187,7 @@ class OperationEnvelope:
             "actorSeq": self.actor_seq,
             "documentId": self.document_id,
             "type": self.kind,
-            "payload": json.loads(json.dumps(self.payload, allow_nan=False)),
+            "payload": _thaw(self.payload),
             "dependencies": list(self.dependencies),
             "logicalClock": self.logical_clock,
         }

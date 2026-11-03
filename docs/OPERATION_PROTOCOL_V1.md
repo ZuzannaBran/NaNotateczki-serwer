@@ -15,7 +15,7 @@ preview. State is rebuilt from a checkpoint followed by accepted operations.
 - `actorId`: persistent actor/installation identity scoped to one account
   namespace or one Share guest session. Changing storage namespace creates a
   new actor; actor IDs must never be reused across unrelated namespaces.
-- `actorSeq`: positive, strictly increasing **per actor and namespace**,
+- `actorSeq`: positive (at most `2^53-1`), strictly increasing **per actor and namespace**,
   across all documents in that namespace; persisted with the pending operation.
 - `documentId`: stable document UID; the reserved literal `@library`
   denotes folder operations.
@@ -26,7 +26,7 @@ preview. State is rebuilt from a checkpoint followed by accepted operations.
 - `payload`: JSON object, no inline binary assets or screen-local state.
 - `dependencies`: unique UUIDs of operations observed before this intent;
   may include an operation from another actor. No self-references.
-- `logicalClock`: positive Lamport counter. Monotonically increased when
+- `logicalClock`: positive Lamport counter (at most `2^53-1`). Monotonically increased when
   creating an operation or observing any remote clock. Must be strictly larger
   than the clocks of its direct dependencies and previous actor operation.
 - `revertsOperationId` (optional): the operation being undone/redone.

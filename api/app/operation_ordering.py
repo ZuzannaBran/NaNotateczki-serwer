@@ -1,8 +1,9 @@
-"""Pure causal ordering for protocol v1; no database writes or v1 route changes."""
+"""Pure causal ordering for protocol v1, with no database writes."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -50,7 +51,10 @@ class CausalOperationBuffer:
             raise ValueError("Invalid checkpoint.")
 
     def missing_dependencies(self, operation: OperationEnvelope) -> list[str]:
-        return [item for item in operation.dependencies if item not in self.known_ids]
+        return [
+            item for item in operation.dependencies
+            if item not in self.known_ids
+        ]
 
     def ingest(self, operation: OperationEnvelope) -> list[OperationEnvelope]:
         known = self.pending.get(operation.operation_id) or self.accepted.get(
@@ -62,7 +66,9 @@ class CausalOperationBuffer:
             return []
         if operation.operation_id in self.known_ids:
             return []
-        if operation.actor_seq <= self.actor_sequences.get(operation.actor_id, 0):
+        if operation.actor_seq <= self.actor_sequences.get(
+            operation.actor_id, 0
+        ):
             raise OperationOrderError("Sequence precedes checkpoint.")
         actor_keys = self.sequence_ids.setdefault(operation.actor_id, {})
         old_id = actor_keys.get(operation.actor_seq)
@@ -104,8 +110,11 @@ class CausalOperationBuffer:
                 (
                     op
                     for op in self.pending.values()
-                    if op.actor_seq == self.actor_sequences.get(op.actor_id, 0) + 1
-                    and all(parent in self.known_ids for parent in op.dependencies)
+                    if op.actor_seq
+                    == self.actor_sequences.get(op.actor_id, 0) + 1
+                    and all(
+                        parent in self.known_ids for parent in op.dependencies
+                    )
                 ),
                 key=precedence,
             )
@@ -120,7 +129,9 @@ class CausalOperationBuffer:
                     raise OperationOrderError("Invalid actor causality.")
                 for parent_id in operation.dependencies:
                     parent = self.accepted.get(parent_id)
-                    if parent and operation.logical_clock <= parent.logical_clock:
+                    if parent and (
+                        operation.logical_clock <= parent.logical_clock
+                    ):
                         raise OperationOrderError("Invalid logical clock.")
                 del self.pending[operation.operation_id]
                 self.known_ids.add(operation.operation_id)
@@ -181,7 +192,7 @@ class OperationPropertyRegister:
         fields = operation.payload.get(
             "properties", operation.payload.get("value")
         )
-        if not isinstance(fields, dict):
+        if not isinstance(fields, Mapping):
             raise ValueError("Projection needs properties or value.")
         key = self._key(operation)
         values = self.values.setdefault(key, {})

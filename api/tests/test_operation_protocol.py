@@ -32,6 +32,8 @@ def test_roundtrip_and_immutable_payload_copy():
     raw["payload"]["value"]["points"].clear()
     assert operation.to_dict()["payload"] == {"value": {"points": [1, 2]}}
     assert OperationEnvelope.from_dict(operation.to_dict()) == operation
+    with pytest.raises(TypeError):
+        operation.payload["value"]["points"][0] = 123
 
 
 def test_every_operation_kind_has_a_target():
@@ -55,6 +57,8 @@ def test_every_operation_kind_has_a_target():
         {"dependencies": [SECOND, SECOND]},
         {"actorSeq": 0},
         {"actorSeq": True},
+        {"actorSeq": 9007199254740992},
+        {"logicalClock": 9007199254740992},
         {"logicalClock": -1},
         {"pageId": None},
         {"operationId": "not-a-uuid"},
