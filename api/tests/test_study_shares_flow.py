@@ -681,6 +681,19 @@ def test_guest_can_edit_original_and_is_revoked_on_end(environment):
     assert db.notebooks[0].content["uid"] == NOTE_UID
 
 
+def test_merge_preserves_new_stroke_layer_order():
+    base = _editable_notebook()
+    edited = copy.deepcopy(base)
+    edited["pages"][0]["inkStrokes"] = [
+        {"id": "z-first", "points": [{"x": 1, "y": 1}]},
+        {"id": "a-second", "points": [{"x": 2, "y": 2}]},
+    ]
+    merged = shares.merge_share_document(base, edited, base)
+    assert [stroke["id"] for stroke in merged["pages"][0]["inkStrokes"]] == [
+        "z-first", "a-second",
+    ]
+
+
 def test_guests_merge_independent_objects_without_lost_writes(environment):
     import copy
     client, db, _, _ = environment
