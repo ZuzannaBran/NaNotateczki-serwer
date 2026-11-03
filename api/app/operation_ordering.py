@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from uuid import uuid4
 from typing import Any
 
@@ -135,6 +136,10 @@ class OperationCheckpoint:
 
     operations: tuple[OperationEnvelope, ...]
     schema_version: int = 1
+    rejected: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "rejected", MappingProxyType(dict(self.rejected)))
 
     def to_dict(self) -> dict:
         return {
@@ -142,6 +147,7 @@ class OperationCheckpoint:
             "operations": [
                 operation.to_dict() for operation in self.operations
             ],
+            "rejectedOperations": dict(self.rejected),
         }
 
     @classmethod
@@ -161,7 +167,16 @@ class OperationCheckpoint:
             )
         except (InvalidOperation, TypeError) as exc:
             raise ValueError("Invalid checkpoint operation.") from exc
-        return cls(operations)
+        rejected = raw.get("rejectedOperations", {})
+        if (
+            not isinstance(rejected, dict)
+            or any(
+                not isinstance(key, str) or not isinstance(reason, str)
+                or not reason for key, reason in rejected.items()
+            )
+        ):
+            raise ValueError("Invalid rejected operation records.")
+        return cls(operations, rejected=dict(rejected))
 
 
 @dataclass
@@ -198,7 +213,8 @@ class CausalOperationBuffer:
                 "Pending operations cannot be checkpointed."
             )
         return OperationCheckpoint(
-            tuple(sorted(self.accepted.values(), key=precedence))
+            tuple(sorted(self.accepted.values(), key=precedence)),
+            rejected=dict(self.rejected),
         )
 
     @classmethod
@@ -212,6 +228,9 @@ class CausalOperationBuffer:
             queue.ingest(operation)
         if queue.pending or len(queue.accepted) != len(checkpoint.operations):
             raise ValueError("Incomplete or inconsistent causal checkpoint.")
+        if any(key in queue.accepted for key in checkpoint.rejected):
+            raise ValueError("Accepted and rejected operation IDs overlap.")
+        queue.rejected.update(checkpoint.rejected)
         return queue
 
     def missing_dependencies(self, operation: OperationEnvelope) -> list[str]:
