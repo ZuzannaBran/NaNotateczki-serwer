@@ -238,7 +238,7 @@ async def apply_one(
     if op.kind == "asset.attach":
         payload = op.to_dict()["payload"]
         digest = payload.get("sha256")
-        if isinstance(digest, str) and len(digest) == 64:
+        if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest):
             verified_row = await session.get(
                 VerifiedAsset, (owner_id, digest)
             )
