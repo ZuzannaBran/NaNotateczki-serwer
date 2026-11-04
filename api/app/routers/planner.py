@@ -8,6 +8,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_protocol import require_legacy_protocol
 from ..database import database_session
 from ..models import PlannerEntry, User
 from ..realtime_hub import hub
@@ -89,6 +90,7 @@ async def put_entry(
             or (body.entry is not None and body.entry.get("id") != uid)):
         raise HTTPException(status_code=422, detail="Planner entry ID mismatch")
     await lock_owner_events(session, user.id)
+    await require_legacy_protocol(session, user.id)
     record = await session.get(PlannerEntry, (user.id, uid))
     created = record is None
     if record is not None:
