@@ -91,7 +91,7 @@ if [[ -n "${NN_STAGE12_FLUTTER_ROOT:-}" ]]; then
   fi
 
   http_port="$("$work/venv/bin/python" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
-  export ALLOW_REGISTRATION=true
+  # Registration remains disabled; the test identity is inserted offline.
   (cd api && exec "$work/venv/bin/python" -m uvicorn app.main:app \
     --host 127.0.0.1 --port "$http_port") >"$work/uvicorn.log" 2>&1 &
   uvicorn_pid="$!"
