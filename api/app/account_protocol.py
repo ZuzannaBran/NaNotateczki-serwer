@@ -1,0 +1,43 @@
+"""Persistent account-wide v1/v2 write fence.
+
+An account without a marker is legacy v1. A marker is created only by the
+offline administrative canary procedure, never by a normal API request.
+Both writers check it while holding the existing per-owner transaction lock.
+"""
+import uuid
+
+from fastapi import HTTPException
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def account_protocol(session: AsyncSession, owner_id: uuid.UUID) -> str:
+    result = await session.execute(
+        text(
+            "SELECT protocol FROM account_sync_protocol "
+            "WHERE owner_id = :owner_id"
+        ),
+        {"owner_id": owner_id},
+    )
+    # No row means v1; the SQL migration leaves every account on v1.
+    return result.scalar_one_or_none() or "v1"
+
+
+async def require_legacy_protocol(
+    session: AsyncSession, owner_id: uuid.UUID,
+) -> None:
+    if await account_protocol(session, owner_id) != "v1":
+        raise HTTPException(
+            status_code=409,
+            detail="Account uses operation API v2; update the client.",
+        )
+
+
+async def require_v2_protocol(
+    session: AsyncSession, owner_id: uuid.UUID,
+) -> None:
+    if await account_protocol(session, owner_id) != "v2":
+        raise HTTPException(
+            status_code=409,
+            detail="Account has not completed operation protocol cutover.",
+        )
