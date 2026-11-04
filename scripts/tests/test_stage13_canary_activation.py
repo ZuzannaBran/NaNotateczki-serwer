@@ -71,7 +71,9 @@ class CanaryActivationTest(unittest.TestCase):
         for table in (
             "synced_notebooks", "document_states", "document_operations",
             "change_events", "device_backups", "account_settings",
-            "planner_entries", "study_shares", "idempotency_records",
+            "planner_entries", "planner_entry_mutations",
+            "actor_checkpoints", "object_tombstones",
+            "study_shares", "idempotency_records",
         ):
             self.assertIn("FROM " + table, body)
 
