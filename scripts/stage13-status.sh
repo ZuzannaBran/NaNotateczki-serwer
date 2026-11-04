@@ -42,4 +42,33 @@ FROM document_states projection
 JOIN synced_notebooks legacy
   ON legacy.owner_id = projection.owner_id
  AND legacy.uid = projection.document_uid;
+DO $
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM account_sync_protocol marker
+    JOIN synced_notebooks legacy ON legacy.owner_id = marker.owner_id
+  ) THEN
+    RAISE EXCEPTION 'Activated v2 account still has legacy documents';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM document_states projection
+    JOIN synced_notebooks legacy
+      ON legacy.owner_id = projection.owner_id
+     AND legacy.uid = projection.document_uid
+  ) THEN
+    RAISE EXCEPTION 'Same UID is present in both v1 and v2';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM actor_checkpoints checkpoint
+    WHERE NOT EXISTS (
+      SELECT 1 FROM document_operations operation
+      WHERE operation.owner_id = checkpoint.owner_id
+        AND operation.actor_id = checkpoint.actor_id
+        AND operation.actor_seq = checkpoint.last_seq
+        AND operation.operation_id = checkpoint.last_operation_id
+    )
+  ) THEN
+    RAISE EXCEPTION 'Actor checkpoint has no matching committed operation';
+  END IF;
+END $;
 SQL
