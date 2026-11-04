@@ -323,6 +323,7 @@ async def create_share(
 ) -> dict:
     # Prevent races with owner deletion and concurrent share creation.
     await lock_owner_events(session, user.id)
+    await require_legacy_protocol(session, user.id)
     # A session is an overlay on an existing, owner-owned cloud document.
     # It must never become the only persisted copy of a user's work.
     notebook = await session.scalar(
