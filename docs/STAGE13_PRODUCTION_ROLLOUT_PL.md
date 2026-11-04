@@ -25,6 +25,13 @@ nie włączać v2 dla realnych kont, nie usuwać starych tabel ani danych.
 
 ## Zabezpieczenie API v2
 
+Migracja `0013_account_protocol_fence.sql` dodaje trwały znacznik
+`account_sync_protocol`: brak wiersza oznacza protokół v1. Istniejące
+konta nie są automatycznie przenoszone. Oba zapisy dokumentów v1
+odrzucają konto z markerem v2 (HTTP 409), a v2 batch wymaga jednocześnie
+markera i zgody canary. Zmiany w plannerze pozostają niezależne.
+
+
 `OPERATIONS_V2_WRITE_MODE` w `compose.yaml` jest domyślnie `disabled`.
 Dotyczy wyłącznie `POST /v2/operations/batch`. Odczyty v2 pozostają
 aktywne, aby nie odciąć już zatwierdzonych operacji. Pozostałe API v1
@@ -116,7 +123,7 @@ curl --fail --silent --show-error -H 'Host: api.nanotateczki.pl' \
 bash scripts/stage13-status.sh
 ```
 
-Migracje 0001–0012 są addytywne; nigdy nie cofać ich `DROP` ani nie
+Migracje 0001–0013 są addytywne; nigdy nie cofać ich `DROP` ani nie
 zmieniać zastosowanego SQL. `apply-migrations.sh` sprawdza sumy SHA-256.
 Przy wdrożeniu pozostawić na początku `OPERATIONS_V2_WRITE_MODE=disabled`.
 Nie używać `docker compose down -v`.
@@ -127,20 +134,26 @@ Gdy proces migracji serwera i aplikacji będzie ukończony oraz przetestowany,
 należy zmigrować **wyłącznie testowe konto** i upewnić się, że żaden stary
 klient nie może zapisywać do jego UID. Dopiero wówczas:
 
-1. Ustalić *własny* `users.id` konta testowego (UUID z PostgreSQL).
-2. Wstawić w `.env`: `OPERATIONS_V2_WRITE_MODE=canary` i
+1. Utworzyć **nowe, puste konto testowe** bez dokumentów, ustawień,
+   backupów i zalegających operacji na urządzeniu. Zweryfikować wcześniej
+   backup PostgreSQL i jego odtworzenie poza produkcją.
+2. Zatrzymać API: `docker compose stop api` i wykonać
+   `bash scripts/stage13-activate-empty-canary.sh UUID_TEST_ACCOUNT`.
+   Skrypt odmawia aktywacji, jeśli konto nie jest puste. Nie wolno go
+   stosować do istniejącego konta użytkownika — nie migruje danych.
+3. Wstawić w `.env`: `OPERATIONS_V2_WRITE_MODE=canary` i
    `OPERATIONS_V2_CANARY_OWNER_IDS=<UUID_TEST_ACCOUNT>`.
-3. Odtworzyć serwis API: `docker compose up -d --no-deps api`.
-4. Zweryfikować synchronizację dwóch klientów, konflikty usunięcia,
+4. Odtworzyć serwis API: `docker compose up -d --no-deps api`.
+5. Zweryfikować synchronizację dwóch klientów, konflikty usunięcia,
    reconnect, restart, share, backup, sesję i brak przecieków A/B.
-5. Uruchomić `bash scripts/stage13-status.sh`; oba liczniki
+6. Uruchomić `bash scripts/stage13-status.sh`; oba liczniki
    `invalid_actor_checkpoints` i `dual_protocol_documents` muszą być 0.
-6. Monitorować API: `docker compose logs --tail=200 api` oraz błędy
+7. Monitorować API: `docker compose logs --tail=200 api` oraz błędy
    po stronie aplikacji (Errors). Odnotować checkpointy i opóźnienia.
 
 Nie włączać pozostałych kont automatycznie i nie uznawać samego HTTP 200 za
-zaliczenie E2E. Flaga canary dopuszcza *tylko* zapisy operacyjne;
-nie implementuje wymuszenia aktualizacji klienta ani serwerowej migracji.
+zaliczenie E2E. Flaga canary **nie migruje dokumentów** ani nie wymusza aktualizacji
+klientów. Pełny cutover istniejących kont pozostaje zablokowany.
 
 ## 5. Powrót do kompatybilnej wersji
 
