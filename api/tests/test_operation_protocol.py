@@ -43,8 +43,8 @@ def test_every_operation_kind_has_a_target():
             fields.update(objectId=None, pageId=None)
         elif target == "page":
             fields.update(objectId="page-1", pageId=None)
-        elif target == "folder":
-            fields.update(documentId="@library", objectId="folder-1", pageId=None)
+        elif target in {"folder", "task"}:
+            fields.update(documentId="@library", objectId="entity-1", pageId=None)
         assert (
             OperationEnvelope.from_dict(sample(**fields)).kind == kind
         )
