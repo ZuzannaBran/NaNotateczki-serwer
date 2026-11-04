@@ -272,7 +272,7 @@ def test_pdf_embed_rejects_an_image_attachment() -> None:
         }), set())
 
 
-@pytest.mark.parametrize("bad_id", ["bad\\nasset", "bad\\x7fasset", ""])
+@pytest.mark.parametrize("bad_id", ["bad\nasset", "bad\x7fasset", ""])
 def test_asset_ids_reject_controls_and_empty_values(bad_id: str) -> None:
     state = initial_state()
     for kind, payload in [
