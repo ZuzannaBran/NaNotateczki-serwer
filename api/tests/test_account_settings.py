@@ -2,6 +2,7 @@
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -16,8 +17,19 @@ class MemorySession:
         self.records = {}
         self.locked = False
         self.commits = 0
+        self.protocols = {}
+        self.protocol_checks = 0
 
-    async def execute(self, statement):
+    async def execute(self, statement, parameters=None):
+        if parameters is not None:
+            assert self.locked
+            assert "FROM account_sync_protocol" in str(statement)
+            self.protocol_checks += 1
+            return SimpleNamespace(
+                scalar_one_or_none=lambda: self.protocols.get(
+                    parameters["owner_id"]
+                ),
+            )
         # A user-row lock must precede all account settings writes.
         assert "FOR UPDATE" in str(statement)
         self.locked = True
@@ -214,3 +226,28 @@ def test_library_state_category_has_postgresql_migration():
         "plannerTasks": {},
         "recentCoverColors": [],
     })["folders"] == ["Notes"]
+
+
+def test_v2_account_cannot_write_legacy_account_settings(monkeypatch):
+    account = User(id=uuid.uuid4(), username="v2", password_hash="hash")
+    session = MemorySession()
+    session.protocols[account.id] = "v2"
+
+    async def no_publish(*args, **kwargs):
+        pytest.fail("Blocked v1 write must not publish.")
+
+    monkeypatch.setattr(api.hub, "publish", no_publish)
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(api.put_account_settings(
+            "backupPreferences",
+            api.SettingsWrite(
+                expectedRevision=0,
+                value={"version": 1, "idleSeconds": 30},
+            ),
+            account,
+            session,
+        ))
+    assert error.value.status_code == 409
+    assert session.protocol_checks == 1
+    assert session.records == {}
+    assert session.commits == 0
