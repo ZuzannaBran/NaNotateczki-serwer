@@ -65,13 +65,13 @@ are emitted (stage 8). Renaming an entity does not change its ID.
 | Document | `document.create`, `document.set`, `document.delete` |
 | Page | `page.create`, `page.set`, `page.delete` |
 | Ink | `stroke.create` |
-| Objects | `object.create`, `object.set`, `object.transform`, `object.reorder`, `object.delete` |
-| Rich text | `text.insert`, `text.delete` |
+| Objects | `object.create`, `object.set`, `object.transform`, `object.reorder`, `object.move`, `object.delete` |
+| Rich text | `text.insert`, `text.delete`, `text.format` |
 | Assets | `asset.attach`, `asset.detach` |
 | Folders | `folder.create`, `folder.set`, `folder.move`, `folder.delete` |
 
-Payload contracts for currently supported v2 reducers (text and assets remain
-unsupported; the semantic validator must match on Flutter and FastAPI):
+Payload contracts for the current v2 reducers (the validators must agree
+between Flutter and FastAPI; production editor cutover is still pending):
 
 - `*.create`: `{"value": {...}}` (an empty object is permitted for a blank entity);
   any supplied `id`/`uid` must match the stable target identity.
@@ -85,8 +85,17 @@ unsupported; the semantic validator must match on Flutter and FastAPI):
 - `text.insert`: `{"afterAtomId": null | "<atom UUID>", "atoms":
   [{"id": "<atom UUID>", "text": "..."}]}`.
 - `text.delete`: `{"atomIds": ["<atom UUID>"]}`. Atom IDs are never reused.
-- `asset.attach`: `{"assetId": "...", "sha256": "..."}`; actual image/PDF
-  bytes travel via a separate verified asset channel.
+- `text.format`: `{"atomIds": ["<UUID>"], "attributes": {"bold": true}}`;
+  setting an attribute to `null` removes it, while per-attribute Lamport
+  versions resolve concurrent format edits without replacing the whole delta.
+- `object.move`: `{"toPageId": "existing-page", "sortIndex": 0}`.
+  Source page and object IDs remain in the operation envelope. The projector
+  moves the object atomically and refuses missing/tombstoned destinations.
+- `asset.attach`: `{"assetId":"image-1", "sha256":"<64 lowercase hex>",
+  "sizeBytes":123, "mediaType":"image/png"}`; permitted types are PNG,
+  JPEG, WebP and PDF; bytes must already be fully uploaded and verified.
+- `asset.detach`: `{"assetId":"image-1"}`. Detach does not delete the
+  underlying content-addressed blob. Asset references use operation precedence.
 
 Stage 6 implements a deterministic sequence CRDT for `text.insert` and
 `text.delete` in `api/app/text_sequence.py`. An editable text object must
@@ -96,8 +105,10 @@ descending (Lamport clock, actor ID, actor sequence, operation ID, atom
 index), so inserting at the caret precedes an existing successor.
 Text tombstones remain valid insertion anchors; `object.set` cannot replace
 CRDT text or change `objectType`. Existing nonempty text requires explicit
-atom migration, and rich Quill formatting/attributes still need a separate
-CRDT layer. The CRDT helper alone does not activate production Share:
+atom migration. Quill inserts and formatting now have a per-attribute
+CRDT layer. Embedded binary Quill delta inserts still require a verified
+asset reference and are rejected by the adapter. These helpers do not
+activate production Share:
 stage 11 must migrate legacy UID state before enabling v2 writers.
 
 ## Document-scoped actors and Share v2
@@ -182,3 +193,24 @@ messages through existing v1 snapshot endpoints.
 Canonical description is kept in `NaNotateczki-serwer`. Flutter counterparts
 are `lib/data/sync/operation_protocol.dart` and later
 `lib/data/sync/operation_ordering.dart`.
+
+
+## Stage 2 verified asset upload (2026-11-04)
+
+For PNG/JPEG/WebP/PDF bytes the client computes SHA-256, then performs
+`PUT /v2/assets/{sha256}` using a raw binary request body. The server
+streams into a private temporary file, checks length, SHA-256 and magic bytes,
+fsyncs it, atomically renames the file and fsyncs its directory before
+committing the `verified_assets` row. The client confirms the returned
+digest, media type and byte length before enqueueing `asset.attach`.
+
+`asset.attach` checks ownership, server metadata and the stored file checksum
+again. `GET /v2/assets/{sha256}` returns checked bytes; Share guests can
+download only blobs already referenced in their authorized document.
+The Dart client rechecks downloaded SHA-256 before exposing bytes.
+
+Apply SQL migration `0014_verified_assets.sql` before deploying the updated
+API. The new routes remain behind the existing v2 protocol and feature gates.
+No account is switched to v2 by this migration. This is infrastructure,
+not a production editor or Share cutover. The server uses
+`/data/assets-v2/<owner-id>/<digest-prefix>/<digest>`.
