@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_protocol import require_legacy_protocol
 from ..database import database_session
 from ..models import Device, DeviceBackup, User
 from ..schemas import BackupCreate, validate_notebook_payload
@@ -57,6 +58,8 @@ async def create_backup(
     settings = get_settings()
     if body.sizeBytes > settings.maximum_backup_bytes:
         raise HTTPException(status_code=413, detail="Backup is too large.")
+    await session.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await require_legacy_protocol(session, user.id)
     device = await session.get(Device, body.deviceId)
     now = datetime.now(UTC)
     if device is None:
@@ -98,6 +101,7 @@ async def upload_content(
     session: AsyncSession = Depends(database_session),
 ) -> None:
     backup = await owned_backup(backup_id, user.id, session, lock=True)
+    await require_legacy_protocol(session, user.id)
     if backup.status != "pending":
         raise HTTPException(status_code=409, detail="Backup is not pending.")
     if content_sha256 != backup.sha256:
@@ -141,6 +145,7 @@ async def finalize_backup(
     session: AsyncSession = Depends(database_session),
 ) -> dict:
     async with _finalize_lock:
+        await require_legacy_protocol(session, user.id)
         return await _finalize_backup(backup_id, user, session)
 
 
