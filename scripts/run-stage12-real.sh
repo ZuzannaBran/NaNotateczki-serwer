@@ -112,8 +112,34 @@ if [[ -n "${NN_STAGE12_FLUTTER_ROOT:-}" ]]; then
     echo "Stage 12 local API did not become ready" >&2
     exit 1
   fi
+  # The Dart E2E test uses a freshly generated owner in this disposable DB.
+  # This avoids introducing any backdoor/auto-activation in production auth.
+  test_owner="$("$work/venv/bin/python" -c 'import uuid; print(uuid.uuid4())')"
+  "${compose[@]}" exec -T db psql -q -v ON_ERROR_STOP=1 \
+    -v owner_id="$test_owner" -U stage12_admin \
+    -d nanotateczki_stage12_test <<'SQL'
+BEGIN;
+INSERT INTO users (id, username, password_hash, auth_version)
+VALUES (:'owner_id'::uuid,
+        'stage12_flutter_' || replace(:'owner_id', '-', ''),
+        'not-a-login-password', 1);
+INSERT INTO account_sync_protocol (owner_id, protocol)
+VALUES (:'owner_id'::uuid, 'v2');
+COMMIT;
+SQL
+  test_access_token="$(
+    cd api && STAGE12_TEST_OWNER="$test_owner" "$work/venv/bin/python" - <<'PY'
+import os
+import uuid
+from app.security import create_access_token
+
+token, _ = create_access_token(uuid.UUID(os.environ["STAGE12_TEST_OWNER"]), 1)
+print(token)
+PY
+  )"
   flutter_device="${NN_STAGE12_DEVICE_ID:-linux}"
   (cd "$flutter_root" && flutter pub get && flutter test -d "$flutter_device" \
     --dart-define="NN_STAGE12_API_URL=http://127.0.0.1:$http_port" \
+    --dart-define="NN_STAGE12_ACCESS_TOKEN=$test_access_token" \
     integration_test/stage12_live_api_test.dart)
 fi
