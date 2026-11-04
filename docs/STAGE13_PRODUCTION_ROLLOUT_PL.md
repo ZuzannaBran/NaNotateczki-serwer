@@ -27,8 +27,9 @@ nie włączać v2 dla realnych kont, nie usuwać starych tabel ani danych.
 
 Migracja `0013_account_protocol_fence.sql` dodaje trwały znacznik
 `account_sync_protocol`: brak wiersza oznacza protokół v1. Istniejące
-konta nie są automatycznie przenoszone. Oba zapisy dokumentów v1
-odrzucają konto z markerem v2 (HTTP 409), a v2 batch wymaga jednocześnie
+konta nie są automatycznie przenoszone. Zapisy dokumentów v1
+(owner PUT/DELETE oraz guest Share PUT) odrzucają konto z markerem v2
+(HTTP 409), a v2 batch wymaga jednocześnie
 markera i zgody canary. Zmiany w plannerze pozostają niezależne.
 
 
