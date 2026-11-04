@@ -57,6 +57,8 @@ cd /srv/nanotateczki
 docker compose ps
 docker compose stop api
 scripts/backup-server.sh /mnt/ZEWNETRZNY_DYSK/nanotateczki
+# Natychmiast przywróć usługę po kopii; test odtworzenia wykonuje się osobno.
+docker compose up -d api caddy
 ```
 
 Skrypt tworzy `postgres.dump`, `device-backups.tar.gz`,
