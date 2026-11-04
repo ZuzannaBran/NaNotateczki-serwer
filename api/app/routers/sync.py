@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_protocol import require_legacy_protocol
 from ..database import database_session
 from ..models import (
     ChangeEvent, DocumentState, IdempotencyRecord, StudyShare,
@@ -156,6 +157,7 @@ async def put_notebook(
     request_hash = hashlib.sha256(encoded).hexdigest()
     received_at = datetime.now(UTC)
     await lock_owner_events(session, user.id)
+    await require_legacy_protocol(session, user.id)
     previous = await idempotent_response(session, user.id, idempotency_key, request_hash)
     if previous is not None:
         return previous
@@ -267,6 +269,7 @@ async def delete_notebook(
     encoded = json.dumps(body.model_dump(), sort_keys=True, separators=(",", ":")).encode()
     request_hash = hashlib.sha256(encoded).hexdigest()
     await lock_owner_events(session, user.id)
+    await require_legacy_protocol(session, user.id)
     previous = await idempotent_response(session, user.id, idempotency_key, request_hash)
     if previous is not None:
         return previous
