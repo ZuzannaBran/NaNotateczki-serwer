@@ -61,6 +61,12 @@ def identity():
         id=owner_id, username="stage12_" + owner_id.hex[:16],
         password_hash="stage12-test-only-not-a-login",
     )
+    # Only disposable Stage-12 accounts use v2; production starts on v1.
+    sql(
+        "INSERT INTO account_sync_protocol (owner_id, protocol) "
+        "VALUES (:owner_id, 'v2')",
+        owner_id=owner_id,
+    )
     token, _ = create_access_token(owner_id, 1)
     return owner_id, token
 
