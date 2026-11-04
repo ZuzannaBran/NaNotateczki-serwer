@@ -29,6 +29,14 @@ WHERE NOT EXISTS (
     AND operation.actor_seq = checkpoint.last_seq
     AND operation.operation_id = checkpoint.last_operation_id
 );
+SELECT count(*) AS v2_activated_accounts
+FROM account_sync_protocol;
+SELECT count(*) AS v2_accounts_with_legacy_documents
+FROM account_sync_protocol marker
+WHERE EXISTS (
+  SELECT 1 FROM synced_notebooks legacy
+  WHERE legacy.owner_id = marker.owner_id
+);
 SELECT count(*) AS dual_protocol_documents
 FROM document_states projection
 JOIN synced_notebooks legacy
