@@ -40,6 +40,12 @@ WHERE users.id = :'owner_id'::uuid
       SELECT 1 FROM document_operations o WHERE o.owner_id = users.id
   )
   AND NOT EXISTS (
+      SELECT 1 FROM actor_checkpoints cp WHERE cp.owner_id = users.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM object_tombstones t WHERE t.owner_id = users.id
+  )
+  AND NOT EXISTS (
       SELECT 1 FROM change_events e WHERE e.owner_id = users.id
   )
   AND NOT EXISTS (
@@ -47,6 +53,9 @@ WHERE users.id = :'owner_id'::uuid
   )
   AND NOT EXISTS (
       SELECT 1 FROM planner_entries p WHERE p.owner_id = users.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM planner_entry_mutations m WHERE m.owner_id = users.id
   )
   AND NOT EXISTS (
       SELECT 1 FROM account_settings a WHERE a.owner_id = users.id
