@@ -1,7 +1,7 @@
 """Deterministic, JSON-safe v2 projection with permanent entity tombstones.
 
-Text atoms use deterministic RGA ordering. Assets still require a separate
-verified transport before they can be enabled.
+Text atoms use deterministic RGA ordering. Inline Quill image/PDF embeds
+reference only separately uploaded, verified and attached assets.
 """
 from __future__ import annotations
 

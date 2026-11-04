@@ -214,3 +214,26 @@ API. The new routes remain behind the existing v2 protocol and feature gates.
 No account is switched to v2 by this migration. This is infrastructure,
 not a production editor or Share cutover. The server uses
 `/data/assets-v2/<owner-id>/<digest-prefix>/<digest>`.
+
+## Stage 2 Quill inline image/PDF embeds (2026-11-04)
+
+A Quill embed is one text atom with `text: "\\uFFFC"`, a stable UUID and
+exactly one `embed` entry. The only supported JSON Delta inserts are
+`{"image":"asset:<assetId>"}` and `{"pdf":"asset:<assetId>"}`.
+The Delta snapshot renders the object insert, while its plain text uses
+the Unicode object-replacement character. Formatting still applies to that
+same stable atom ID.
+
+The client must upload asset bytes and receive a verified receipt, then emit
+`asset.attach` on the **same text object** before `text.insert` references
+its `assetId`. The projector validates that the referenced attachment exists
+and has the correct MIME: PNG/JPEG/WebP for image, PDF for pdf. External URLs,
+device paths and bare replacement characters are rejected; unsupported
+Quill embed kinds are rejected rather than flattened to text.
+
+`asset.detach`, or attaching different bytes to an already referenced
+asset ID, is rejected while any visible text atom uses that asset. First
+emit `text.delete` for the embed, then `asset.detach`. Tombstoned text
+atoms remain available as causal anchors; they do not keep the visible
+attachment alive. These operations remain part of the v2 infrastructure:
+production EditorController and legacy Share still use v1 pending cutover.
