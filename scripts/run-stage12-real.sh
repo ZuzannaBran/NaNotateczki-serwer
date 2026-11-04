@@ -58,6 +58,8 @@ export JWT_SECRET="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export ALLOW_REGISTRATION="false"
 export DATA_PATH="$work/data"
 export NN_STAGE12_REAL_DB="1"
+# Stage-12 clients use an isolated disposable database, never production.
+export OPERATIONS_V2_WRITE_MODE="all"
 
 case "${1:-}" in
   "")
