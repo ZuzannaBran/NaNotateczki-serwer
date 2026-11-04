@@ -53,7 +53,7 @@ def client():
         yield api
 
 
-def identity():
+def identity(*, v2=True):
     owner_id = uuid.uuid4()
     sql(
         "INSERT INTO users (id, username, password_hash, auth_version) "
@@ -61,12 +61,13 @@ def identity():
         id=owner_id, username="stage12_" + owner_id.hex[:16],
         password_hash="stage12-test-only-not-a-login",
     )
-    # Only disposable Stage-12 accounts use v2; production starts on v1.
-    sql(
-        "INSERT INTO account_sync_protocol (owner_id, protocol) "
-        "VALUES (:owner_id, 'v2')",
-        owner_id=owner_id,
-    )
+    # New accounts start in v1 unless this disposable fixture opts into v2.
+    if v2:
+        sql(
+            "INSERT INTO account_sync_protocol (owner_id, protocol) "
+            "VALUES (:owner_id, 'v2')",
+            owner_id=owner_id,
+        )
     token, _ = create_access_token(owner_id, 1)
     return owner_id, token
 
@@ -161,6 +162,35 @@ def feed(client, token):
             return result
         assert entries, "A paginated feed must advance its cursor"
         cursor = payload["cursor"]
+
+
+def test_persistent_protocol_fence_rejects_cross_writers(client):
+    _, v1_token = identity(v2=False)
+    legacy_doc = "stage12-legacy-" + uuid.uuid4().hex
+    operation = Actor(legacy_doc, "before-cutover").next(
+        "document.create", payload={"value": {"title": "Legacy"}},
+    )
+    blocked = client.post(
+        "/v2/operations/batch", headers=headers(v1_token),
+        json={"operations": [operation]},
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert "cutover" in str(blocked.json()).lower()
+
+    _, v2_token = identity()
+    uid = "stage12-unrelated-" + uuid.uuid4().hex
+    old_notebook = {
+        "uid": uid, "title": "Stale snapshot", "kind": 0,
+        "folder": "", "createdAt": "2026-11-04T10:00:00Z",
+        "updatedAt": "2026-11-04T10:00:00Z", "pages": [],
+    }
+    response = client.put(
+        f"/v1/sync/notebooks/{uid}",
+        headers={**headers(v2_token), "Idempotency-Key": uuid.uuid4().hex},
+        json={"expectedRevision": 0, "notebook": old_notebook},
+    )
+    assert response.status_code == 409, response.text
+    assert "operation API v2" in str(response.json())
 
 
 def test_1000_inserts_1000_deletes_and_idempotent_retries(client):
