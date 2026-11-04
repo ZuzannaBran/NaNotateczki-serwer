@@ -867,6 +867,7 @@ def test_owner_change_feed_contains_merged_guest_strokes(monkeypatch):
         pass
 
     monkeypatch.setattr(sync, "lock_owner_events", no_op)
+    monkeypatch.setattr(sync, "require_legacy_protocol", no_op)
     monkeypatch.setattr(sync, "hub", SimpleNamespace(publish=no_op))
     response = asyncio.run(sync.put_notebook(
         NOTE_UID,
