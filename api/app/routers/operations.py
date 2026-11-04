@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_protocol import require_v2_protocol
 from ..database import database_session
 from ..models import (
     ActorCheckpoint, DocumentOperation, DocumentState, ObjectTombstone,
@@ -328,6 +329,7 @@ async def post_batch(
     # Serializes account commits with v1 sync and revocations, so a later
     # cursor cannot become visible before an earlier transaction commits.
     await lock_owner_events(session, principal.owner_id)
+    await require_v2_protocol(session, principal.owner_id)
     # The global lock linearizes newly allocated v2 event cursors across
     # accounts; a rolled-back transaction cannot expose an earlier gap.
     await session.execute(text("SELECT pg_advisory_xact_lock(681246731)"))
