@@ -983,6 +983,7 @@ def test_deleting_shared_notebook_revokes_guest_access(monkeypatch):
         notifications.append((key, message))
 
     monkeypatch.setattr(sync, "lock_owner_events", no_lock)
+    monkeypatch.setattr(sync, "require_legacy_protocol", no_lock)
     monkeypatch.setattr(sync, "hub", SimpleNamespace(publish=publish))
     asyncio.run(sync.delete_notebook(
         NOTE_UID,
