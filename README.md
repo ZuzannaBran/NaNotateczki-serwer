@@ -252,3 +252,22 @@ Backup `verifiedAt` oznacza wyłącznie weryfikację archiwum: nie wolno
 używać go do rozstrzygania kolejności edycji ani do przywracania tombstones.
 Po utracie połączenia klient pobiera pełny stan serwera i uzgadnia go
 z trwałymi lokalnymi zmianami offline.
+
+
+## Etap 14 — audyt wycofania legacy (bez usuwania v1)
+
+Po wdrożeniu migracji 0013 można wykonać odczytowy audyt:
+
+```bash
+bash scripts/stage14-retirement-audit.sh
+python3 -m unittest discover -s scripts/tests -p 'test_stage14_retirement_audit.py'
+```
+
+Audyt raportuje liczbę kont i dokumentów v1, aktywnych sesji Share v1,
+podwójnych UID oraz niepoprawnych checkpointów. Działa w transakcji
+PostgreSQL READ ONLY, niczego nie przełącza i przy blokadzie zwraca kod 75.
+Nawet kod 0 nie zezwala na wyłączenie v1: nowe konta nadal używają v1,
+a migracja istniejących kont, outbox urządzeń i testy E2E są otwarte.
+Warunki bezpiecznej finalizacji opisano w aplikacji:
+docs/ETAP_14_FINALIZACJA.md (gałąź dev).
+Nie usuwać starszych routerów ani archiwalnych adapterów recovery.
