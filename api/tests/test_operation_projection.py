@@ -125,9 +125,10 @@ def test_text_atoms_are_applied_but_unverified_assets_remain_disabled():
                             ]}), deleted)
     assert state["pages"]["p"]["objects"]["t"]["properties"]["text"] == "Hello"
 
-    with pytest.raises(ProjectionError, match="not enabled"):
+    with pytest.raises(ProjectionError, match="not verified"):
         apply(state, op(5, "asset.attach", page="p", target="t",
-                        props={"assetId": "a", "sha256": "a" * 64}), deleted)
+                        props={"assetId": "a", "sha256": "a" * 64,
+                               "sizeBytes": 4, "mediaType": "image/png"}), deleted)
 
 
 def test_reject_modified_delete_payload_and_missing_properties():
