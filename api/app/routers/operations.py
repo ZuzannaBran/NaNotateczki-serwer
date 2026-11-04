@@ -311,6 +311,7 @@ async def post_batch(
     session: AsyncSession = Depends(database_session),
 ) -> dict:
     principal = await authorize(session, authorization, share_id)
+    require_operations_v2_write(principal.owner_id)
     operations: list[OperationEnvelope] = []
     seen: set[str] = set()
     for raw in body.operations:
