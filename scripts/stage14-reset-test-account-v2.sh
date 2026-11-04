@@ -89,8 +89,9 @@ BEGIN
   DELETE FROM account_settings WHERE owner_id = target;
   DELETE FROM device_backups WHERE owner_id = target;
   DELETE FROM devices WHERE owner_id = target;
-  -- Revoke all refresh sessions so stale devices must authenticate again.
+  -- Revoke refresh sessions AND short-lived access tokens/WebSockets.
   DELETE FROM refresh_sessions WHERE owner_id = target;
+  UPDATE users SET auth_version = auth_version + 1 WHERE id = target;
 
   INSERT INTO account_sync_protocol (owner_id, protocol)
     VALUES (target, 'v2');
@@ -109,7 +110,7 @@ if [[ "$(printf '%s\n' "$result" | tail -n 1)" != "MIGRATED:$owner_id" ]]; then
 fi
 
 echo "Reset and activated one account: $owner_id (v2)."
-echo "Password hash and username are unchanged; refresh sessions revoked."
+echo "Password hash and username unchanged; all existing tokens invalidated."
 echo "Old backup files remain on disk but have no database entries."
 echo "Clear this account's legacy client databases/outboxes before reconnecting."
 echo "Set OPERATIONS_V2_WRITE_MODE=canary and whitelist this UUID."
