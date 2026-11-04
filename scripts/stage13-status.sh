@@ -42,7 +42,7 @@ FROM document_states projection
 JOIN synced_notebooks legacy
   ON legacy.owner_id = projection.owner_id
  AND legacy.uid = projection.document_uid;
-DO $
+DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM account_sync_protocol marker
@@ -70,5 +70,5 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Actor checkpoint has no matching committed operation';
   END IF;
-END $;
+END $$;
 SQL
