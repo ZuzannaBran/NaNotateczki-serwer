@@ -18,14 +18,22 @@ class MemorySession:
     def __init__(self):
         self.records = {}
         self.commits = 0
+        self.protocols = {}
+        self.protocol_checks = 0
 
     async def get(self, model, key):
         assert model is PlannerEntry
         return self.records.get(key)
 
     async def execute(self, statement, parameters=None):
-        if parameters:
-            return None
+        if parameters is not None:
+            assert "FROM account_sync_protocol" in str(statement)
+            self.protocol_checks += 1
+            return SimpleNamespace(
+                scalar_one_or_none=lambda: self.protocols.get(
+                    parameters["owner_id"]
+                ),
+            )
         params = statement.compile().params
         owner = next(x for x in params.values() if isinstance(x, uuid.UUID))
         after = next((x for x in params.values() if isinstance(x, str)), "")
@@ -172,3 +180,14 @@ def test_paginated_bootstrap_includes_all_entries(environment):
     ).json()
     assert len(second["entries"]) == 15
     assert second["next"] is None
+
+
+def test_v2_account_cannot_write_legacy_planner_entries(environment):
+    client, db, principal = environment
+    db.protocols[principal["user"].id] = "v2"
+    stamp = datetime.now(UTC)
+    response = write(client, "blocked-entry", stamp, "Not allowed")
+    assert response.status_code == 409
+    assert db.protocol_checks == 1
+    assert db.records == {}
+    assert db.commits == 0
