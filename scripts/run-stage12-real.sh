@@ -121,7 +121,7 @@ if [[ -n "${NN_STAGE12_FLUTTER_ROOT:-}" ]]; then
 BEGIN;
 INSERT INTO users (id, username, password_hash, auth_version)
 VALUES (:'owner_id'::uuid,
-        'stage12_flutter_' || replace(:'owner_id', '-', ''),
+        's12_' || substr(replace(:'owner_id', '-', ''), 1, 24),
         'not-a-login-password', 1);
 INSERT INTO account_sync_protocol (owner_id, protocol)
 VALUES (:'owner_id'::uuid, 'v2');
