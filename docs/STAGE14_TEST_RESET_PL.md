@@ -47,6 +47,8 @@ Skrypt:
 - nie modyfikuje innych kont ani globalnych migracji;
 - kasuje dane wskazanego konta wraz z idempotency receipts, outboxem
   serwera, share, backup rows, plannerem i sesjami odświeżania;
+- zwiększa `auth_version`, unieważniając stare access JWT i WebSocket
+  bez zmieniania hasła;
 - w **tej samej transakcji** dodaje nieodwracalny marker protokołu v2;
 - odmawia działania na koncie już aktywowanym do v2 oraz przy nieznanych
   nowych tabelach konta;
