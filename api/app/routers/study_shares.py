@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_protocol import require_legacy_protocol
 from ..database import database_session, session_factory
 from ..models import ChangeEvent, StudyShare, StudyShareGrant, SyncedNotebook, User
 from ..rate_limit import InMemoryRateLimiter
@@ -445,6 +446,7 @@ async def edit_shared_document(
     received_at = datetime.now(UTC)
     share = await guest_share(share_id, ticket, session)
     await lock_owner_events(session, share.owner_id)
+    await require_legacy_protocol(session, share.owner_id)
     # Lock the share itself as well, serializing revocation and guest writes.
     share = await session.scalar(select(StudyShare)
         .where(StudyShare.id == share_id).with_for_update())
