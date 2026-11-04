@@ -104,6 +104,7 @@ def apply_operation(
             set(payload) != {"assetId", "sha256", "sizeBytes", "mediaType"}
             or not isinstance(payload["assetId"], str)
             or not 1 <= len(payload["assetId"]) <= 128
+            or any(ord(c) < 32 or ord(c) == 127 for c in payload["assetId"])
             or not isinstance(payload["sha256"], str)
             or not re.fullmatch(r"[0-9a-f]{64}", payload["sha256"])
             or type(payload["sizeBytes"]) is not int
@@ -121,6 +122,7 @@ def apply_operation(
             set(payload) != {"assetId"}
             or not isinstance(payload["assetId"], str)
             or not 1 <= len(payload["assetId"]) <= 128
+            or any(ord(c) < 32 or ord(c) == 127 for c in payload["assetId"])
         ):
             raise ProjectionError("Invalid asset.detach payload.")
     if kind == "stroke.create":

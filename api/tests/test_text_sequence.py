@@ -270,3 +270,22 @@ def test_pdf_embed_rejects_an_image_attachment() -> None:
             "atoms": [{"id": A, "text": "\ufffc",
                        "embed": {"pdf": "asset:file-1"}}],
         }), set())
+
+
+@pytest.mark.parametrize("bad_id", ["bad\\nasset", "bad\\x7fasset", ""])
+def test_asset_ids_reject_controls_and_empty_values(bad_id: str) -> None:
+    state = initial_state()
+    for kind, payload in [
+        ("asset.attach", {
+            "assetId": bad_id, "sha256": "a" * 64,
+            "sizeBytes": 10, "mediaType": "image/png",
+        }),
+        ("asset.detach", {"assetId": bad_id}),
+    ]:
+        before = copy.deepcopy(state)
+        with pytest.raises(ProjectionError, match="Invalid asset"):
+            apply_operation(
+                state, operation(kind, payload), set(),
+                verified_assets=frozenset({"a" * 64}),
+            )
+        assert state == before
