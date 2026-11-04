@@ -33,6 +33,7 @@ def test_legacy_restore_flag_cannot_resurrect_deleted_notebook(monkeypatch):
 
     monkeypatch.setattr(sync, "request_size_guard", no_op)
     monkeypatch.setattr(sync, "lock_owner_events", no_op)
+    monkeypatch.setattr(sync, "require_legacy_protocol", no_op)
     monkeypatch.setattr(sync, "idempotent_response", no_op)
     payload = {
         "uid": uid,
