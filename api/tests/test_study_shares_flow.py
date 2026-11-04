@@ -149,6 +149,7 @@ def environment(monkeypatch, tmp_path):
     async def no_advisory_lock(*args):
         return None
     monkeypatch.setattr(shares, "lock_owner_events", no_advisory_lock)
+    monkeypatch.setattr(shares, "require_legacy_protocol", no_advisory_lock)
     shares.join_limiter._entries.clear()
     shares.publish_limiter._entries.clear()
     try:
