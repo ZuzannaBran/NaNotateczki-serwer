@@ -49,6 +49,9 @@ WHERE users.id = :'owner_id'::uuid
       SELECT 1 FROM planner_entries p WHERE p.owner_id = users.id
   )
   AND NOT EXISTS (
+      SELECT 1 FROM account_settings a WHERE a.owner_id = users.id
+  )
+  AND NOT EXISTS (
       SELECT 1 FROM study_shares s WHERE s.owner_id = users.id
   )
   AND NOT EXISTS (
