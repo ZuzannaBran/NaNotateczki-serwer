@@ -100,7 +100,7 @@ def apply_operation(
     else:
         is_create = kind.endswith(".create")
     is_delete = kind.endswith(".delete") and not kind.startswith("text.")
-    if kind.startswith("text."):
+    if kind.startswith("text.") or kind == "object.move":
         fields = None
     elif is_delete:
         if op.to_dict()["payload"]:
@@ -244,6 +244,35 @@ def apply_operation(
             return current, object_key if object_key not in tombstones else None
         raise ProjectionError("Parent page has not been created.")
     objects = page.setdefault("objects", {})
+    if kind == "object.move":
+        payload = op.to_dict()["payload"]
+        if set(payload) != {"toPageId", "sortIndex"}:
+            raise ProjectionError("Invalid object.move payload.")
+        destination_id, sort_index = payload["toPageId"], payload["sortIndex"]
+        if (
+            not isinstance(destination_id, str)
+            or not 1 <= len(destination_id) <= 128
+            or type(sort_index) is not int
+            or not 0 <= sort_index < 1000000
+            or destination_id == op.page_id
+        ):
+            raise ProjectionError("Invalid object.move destination.")
+        destination_page = pages.get(destination_id)
+        if destination_page is None or (
+            "page", "", destination_id
+        ) in tombstones:
+            raise ProjectionError("Destination page does not exist.")
+        if op.object_id not in objects:
+            raise ProjectionError("Source object does not exist.")
+        destination_objects = destination_page.setdefault("objects", {})
+        if op.object_id in destination_objects or (
+            "object", destination_id, op.object_id or ""
+        ) in tombstones:
+            raise ProjectionError("Destination identity is occupied.")
+        moved = objects.pop(op.object_id)
+        _merge(moved, {"sortIndex": sort_index}, op)
+        destination_objects[op.object_id] = moved
+        return current, None
     if kind == "object.delete":
         objects.pop(op.object_id, None)
         return current, object_key if object_key not in tombstones else None
@@ -269,7 +298,21 @@ def apply_operation(
         except TextSequenceError as exc:
             raise ProjectionError(str(exc)) from exc
         return current, None
-    if "textAtoms" in node and "text" in fields:
+    if "textAtoms" in node and ({"text", "delta"} & fields.keys()):
         raise ProjectionError("CRDT text cannot be replaced by object.set.")
     _merge(node, fields, op)
     return current, None
+
+
+def ordered_objects(page: dict) -> list[tuple[str, dict]]:
+    """Return the z-order independently of JSONB object-key order."""
+    objects = page.get("objects", {})
+    if not isinstance(objects, dict):
+        raise ProjectionError("Invalid object collection.")
+    def order(entry: tuple[str, dict]) -> tuple[int, str]:
+        object_id, node = entry
+        index = node.get("properties", {}).get("sortIndex", 0)
+        if type(index) is not int or not 0 <= index < 1000000:
+            raise ProjectionError("Invalid object z-order.")
+        return index, object_id
+    return sorted(objects.items(), key=order)
