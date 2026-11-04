@@ -17,6 +17,7 @@ def test_legacy_writes_reject_uid_with_v2_state(monkeypatch, method):
 
     monkeypatch.setattr(sync, "request_size_guard", no_op)
     monkeypatch.setattr(sync, "lock_owner_events", no_op)
+    monkeypatch.setattr(sync, "require_legacy_protocol", no_op)
     monkeypatch.setattr(sync, "idempotent_response", no_op)
 
     class ExistingV2:
