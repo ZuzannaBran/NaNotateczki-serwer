@@ -77,6 +77,7 @@ def environment(monkeypatch):
         pass
 
     monkeypatch.setattr(sync, "lock_owner_events", skip_lock)
+    monkeypatch.setattr(sync, "require_legacy_protocol", skip_lock)
     monkeypatch.setattr(sync, "idempotent_response", empty_idempotency)
     monkeypatch.setattr(sync.hub, "publish", no_broadcast)
     return owner, record, session
