@@ -17,8 +17,9 @@ from ..account_protocol import require_v2_protocol
 from ..database import database_session
 from ..models import (
     ActorCheckpoint, DocumentOperation, DocumentState, ObjectTombstone,
-    StudyShare, StudyShareGrant, SyncedNotebook, User,
+    StudyShare, StudyShareGrant, SyncedNotebook, User, VerifiedAsset,
 )
+from ..asset_store import asset_path, valid_verified_file
 from ..operation_ordering import precedence
 from ..operation_projection import ProjectionError, apply_operation
 from ..operation_protocol import (
@@ -233,8 +234,28 @@ async def apply_one(
     import copy
 
     before = copy.deepcopy(state.content) if state is not None else None
+    verified: frozenset[str] = frozenset()
+    if op.kind == "asset.attach":
+        payload = op.to_dict()["payload"]
+        digest = payload.get("sha256")
+        if isinstance(digest, str) and len(digest) == 64:
+            verified_row = await session.get(
+                VerifiedAsset, (owner_id, digest)
+            )
+            if (
+                verified_row is not None
+                and verified_row.size_bytes == payload.get("sizeBytes")
+                and verified_row.media_type == payload.get("mediaType")
+                and valid_verified_file(
+                    asset_path(get_settings().data_path, owner_id, digest),
+                    digest, verified_row.size_bytes,
+                )
+            ):
+                verified = frozenset({digest})
     try:
-        projected, tombstone = apply_operation(before, op, tombstones)
+        projected, tombstone = apply_operation(
+            before, op, tombstones, verified_assets=verified
+        )
     except ProjectionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if projected is None and state is None and op.kind != "document.delete":

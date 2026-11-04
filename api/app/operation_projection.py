@@ -6,6 +6,7 @@ verified transport before they can be enabled.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 from typing import Any
 
 from .operation_ordering import precedence
@@ -86,6 +87,8 @@ def apply_operation(
     current: dict | None,
     op: OperationEnvelope,
     tombstones: set[tuple[str, str, str]],
+    *,
+    verified_assets: frozenset[str] = frozenset(),
 ) -> tuple[dict | None, tuple[str, str, str] | None]:
     """Return updated projection and optional newly permanent tombstone.
 
@@ -93,14 +96,37 @@ def apply_operation(
     and appends the operation in ONE PostgreSQL transaction.
     """
     kind = op.kind
-    if kind.startswith("asset."):
-        raise ProjectionError("Asset reducers are not enabled in v2 yet.")
+    if kind == "asset.attach":
+        payload = op.to_dict()["payload"]
+        if (
+            set(payload) != {"assetId", "sha256", "sizeBytes", "mediaType"}
+            or not isinstance(payload["assetId"], str)
+            or not 1 <= len(payload["assetId"]) <= 128
+            or not isinstance(payload["sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", payload["sha256"])
+            or type(payload["sizeBytes"]) is not int
+            or not 1 <= payload["sizeBytes"] <= 64 * 1024 * 1024
+            or payload["mediaType"] not in {
+                "image/png", "image/jpeg", "image/webp", "application/pdf"
+            }
+        ):
+            raise ProjectionError("Invalid asset.attach payload.")
+        if payload["sha256"] not in verified_assets:
+            raise ProjectionError("Asset is not verified.")
+    elif kind == "asset.detach":
+        payload = op.to_dict()["payload"]
+        if (
+            set(payload) != {"assetId"}
+            or not isinstance(payload["assetId"], str)
+            or not 1 <= len(payload["assetId"]) <= 128
+        ):
+            raise ProjectionError("Invalid asset.detach payload.")
     if kind == "stroke.create":
         is_create = True
     else:
         is_create = kind.endswith(".create")
     is_delete = kind.endswith(".delete") and not kind.startswith("text.")
-    if kind.startswith("text.") or kind == "object.move":
+    if kind.startswith(("text.", "asset.")) or kind == "object.move":
         fields = None
     elif is_delete:
         if op.to_dict()["payload"]:
@@ -289,6 +315,22 @@ def apply_operation(
         objects[op.object_id] = node
     if node is None:
         raise ProjectionError("Object has not been created.")
+    if kind.startswith("asset."):
+        asset_id = payload["assetId"]
+        rank = list(precedence(op))
+        versions = node.setdefault("assetVersions", {})
+        if asset_id not in versions or rank > versions[asset_id]:
+            assets = node.setdefault("assets", {})
+            if kind == "asset.attach":
+                assets[asset_id] = {
+                    "sha256": payload["sha256"],
+                    "sizeBytes": payload["sizeBytes"],
+                    "mediaType": payload["mediaType"],
+                }
+            else:
+                assets.pop(asset_id, None)
+            versions[asset_id] = rank
+        return current, None
     if kind.startswith("text."):
         if (node.get("type") != "object.create" or
                 node.get("properties", {}).get("objectType") != "text"):

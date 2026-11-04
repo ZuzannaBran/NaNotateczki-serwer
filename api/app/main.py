@@ -9,7 +9,7 @@ from sqlalchemy import text
 
 from .database import engine
 from .routers import (
-    account_settings, auth, backups, operation_realtime, operations, planner,
+    account_settings, assets, auth, backups, operation_realtime, operations, planner,
     planner_v2,
     realtime, reports, study_shares, sync,
 )
@@ -61,6 +61,8 @@ async def security_boundary(request: Request, call_next):
             maximum = 3 * 1024 * 1024
         elif request.url.path.startswith("/v1/sync/notebooks/"):
             maximum = settings.maximum_sync_bytes
+        elif request.url.path.startswith("/v2/assets/"):
+            maximum = settings.maximum_asset_bytes
         elif request.url.path.startswith("/v1/backups/") and request.url.path.endswith(
             "/content"
         ):
@@ -102,6 +104,7 @@ app.include_router(planner_v2.router)
 app.include_router(backups.router)
 app.include_router(sync.router)
 app.include_router(operations.router)
+app.include_router(assets.router)
 app.include_router(operation_realtime.router)
 app.include_router(realtime.router)
 app.include_router(study_shares.router)
