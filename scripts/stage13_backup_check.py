@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 EXPECTED = frozenset({
     "postgres.dump", "device-backups.tar.gz", "deployment-metadata.tar.gz",
 })
-CHECKSUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]+)\\Z")
+CHECKSUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]+)\Z")
 
 
 class BackupError(Exception):
@@ -53,7 +53,7 @@ def validate_manifest(directory: Path) -> None:
 
 
 def safe_name(name: str, expected_root: str) -> tuple[str, ...]:
-    if not name or name.startswith("/") or "\\\\" in name or "\\x00" in name:
+    if not name or name.startswith("/") or "\\" in name or "\\x00" in name:
         raise BackupError("Unsafe archive path")
     normalized = name.rstrip("/")
     pieces = normalized.split("/")
