@@ -192,3 +192,81 @@ def test_existing_plain_text_requires_explicit_migration() -> None:
                                             "atoms": [{"id": A, "text": "x"}]}),
             set(),
         )
+
+
+def test_quill_embed_requires_verified_attachment_and_round_trips() -> None:
+    state = initial_state()
+    embed = operation("text.insert", {
+        "afterAtomId": None,
+        "atoms": [{"id": A, "text": "\ufffc",
+                   "embed": {"image": "asset:photo-1"},
+                   "attributes": {"width": 120}}],
+    })
+    before = copy.deepcopy(state)
+    with pytest.raises(ProjectionError, match="matching attached asset"):
+        apply_operation(state, embed, set())
+    assert state == before
+
+    attachment = operation("asset.attach", {
+        "assetId": "photo-1", "sha256": "a" * 64,
+        "sizeBytes": 100, "mediaType": "image/png",
+    })
+    with pytest.raises(ProjectionError, match="not verified"):
+        apply_operation(state, attachment, set())
+    state, _ = apply_operation(
+        state, attachment, set(), verified_assets=frozenset({"a" * 64}),
+    )
+    state, _ = apply_operation(state, embed, set())
+    assert node(state)["properties"]["text"] == "\ufffc"
+    assert node(state)["properties"]["delta"] == [{
+        "insert": {"image": "asset:photo-1"},
+        "attributes": {"width": 120},
+    }]
+    with pytest.raises(ProjectionError, match="embedded asset"):
+        apply_operation(
+            state, operation("asset.detach", {"assetId": "photo-1"},
+                             clock=10), set(),
+        )
+    state, _ = apply_operation(
+        state, operation("text.delete", {"atomIds": [A]}, clock=11), set(),
+    )
+    state, _ = apply_operation(
+        state, operation("asset.detach", {"assetId": "photo-1"},
+                         clock=12), set(),
+    )
+    assert node(state).get("assets", {}) == {}
+    assert node(state)["properties"]["delta"] == []
+
+
+@pytest.mark.parametrize("embed,text", [
+    ({"image": "https://example.com/x.png"}, "\ufffc"),
+    ({"image": "asset:photo", "video": "asset:other"}, "\ufffc"),
+    ({"video": "asset:photo"}, "\ufffc"),
+    ({"image": "asset:photo"}, "x"),
+    ({"image": "asset:photo\\n"}, "\ufffc"),
+])
+def test_quill_embeds_fail_closed(embed: dict, text: str) -> None:
+    state = initial_state()
+    before = copy.deepcopy(state)
+    with pytest.raises(ProjectionError):
+        apply_operation(
+            state, operation("text.insert", {
+                "afterAtomId": None,
+                "atoms": [{"id": A, "text": text, "embed": embed}],
+            }), set(),
+        )
+    assert state == before
+
+
+def test_pdf_embed_rejects_an_image_attachment() -> None:
+    state = initial_state()
+    state, _ = apply_operation(state, operation("asset.attach", {
+        "assetId": "file-1", "sha256": "b" * 64,
+        "sizeBytes": 100, "mediaType": "image/png",
+    }), set(), verified_assets=frozenset({"b" * 64}))
+    with pytest.raises(ProjectionError, match="matching attached asset"):
+        apply_operation(state, operation("text.insert", {
+            "afterAtomId": None,
+            "atoms": [{"id": A, "text": "\ufffc",
+                       "embed": {"pdf": "asset:file-1"}}],
+        }), set())

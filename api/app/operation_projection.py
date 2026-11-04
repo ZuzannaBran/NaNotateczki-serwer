@@ -11,7 +11,9 @@ from typing import Any
 
 from .operation_ordering import precedence
 from .operation_protocol import LIBRARY_DOCUMENT_ID, OperationEnvelope
-from .text_sequence import TextSequenceError, apply_text_operation
+from .text_sequence import (
+    TextSequenceError, apply_text_operation, render_delta,
+)
 
 
 class ProjectionError(ValueError):
@@ -321,6 +323,26 @@ def apply_operation(
         versions = node.setdefault("assetVersions", {})
         if asset_id not in versions or rank > versions[asset_id]:
             assets = node.setdefault("assets", {})
+            if kind == "asset.detach" or (
+                kind == "asset.attach" and asset_id in assets
+                and assets[asset_id] != {
+                    "sha256": payload["sha256"],
+                    "sizeBytes": payload["sizeBytes"],
+                    "mediaType": payload["mediaType"],
+                }
+            ):
+                try:
+                    visible = render_delta(node.get("textAtoms", {}))
+                except TextSequenceError as exc:
+                    raise ProjectionError(str(exc)) from exc
+                if any(
+                    isinstance(item["insert"], dict)
+                    and f"asset:{asset_id}" in item["insert"].values()
+                    for item in visible
+                ):
+                    raise ProjectionError(
+                        "Cannot detach or replace an embedded asset."
+                    )
             if kind == "asset.attach":
                 assets[asset_id] = {
                     "sha256": payload["sha256"],

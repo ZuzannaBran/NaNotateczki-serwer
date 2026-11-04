@@ -46,6 +46,22 @@ def validate_attributes(value: object, *, allow_null: bool = False) -> dict:
     return value
 
 
+def _embed_asset_id(value: object, text: object) -> str:
+    """Require canonical Quill image/PDF references to attached assets."""
+    if text != "\ufffc" or not isinstance(value, dict) or len(value) != 1:
+        raise TextSequenceError("Invalid Quill embed atom.")
+    kind, reference = next(iter(value.items()))
+    if kind not in ("image", "pdf") or not isinstance(reference, str):
+        raise TextSequenceError("Unsupported Quill embed.")
+    if not reference.startswith("asset:"):
+        raise TextSequenceError("Quill embed requires an asset reference.")
+    asset_id = reference[6:]
+    if (not 1 <= len(asset_id) <= 128
+            or any(ord(char) < 32 or ord(char) == 127 for char in asset_id)):
+        raise TextSequenceError("Invalid embedded asset ID.")
+    return asset_id
+
+
 def _visible_ids(atoms: dict[str, dict]) -> list[str]:
     children: dict[str | None, list[str]] = {}
     for atom_id, atom in atoms.items():
@@ -64,6 +80,10 @@ def _visible_ids(atoms: dict[str, dict]) -> list[str]:
         ):
             raise TextSequenceError("Invalid atom fields.")
         validate_attributes(atom.get("attributes", {}))
+        if "embed" in atom:
+            _embed_asset_id(atom["embed"], atom["text"])
+        elif "\ufffc" in atom["text"]:
+            raise TextSequenceError("Unlinked Quill object replacement.")
         children.setdefault(parent, []).append(atom_id)
     for siblings in children.values():
         siblings.sort(
@@ -95,7 +115,15 @@ def render_delta(atoms: dict[str, dict]) -> list[dict]:
     for atom_id in _visible_ids(atoms):
         atom = atoms[atom_id]
         attributes = atom.get("attributes", {})
-        if output and output[-1].get("attributes", {}) == attributes:
+        if "embed" in atom:
+            entry = {"insert": dict(atom["embed"])}
+            if attributes:
+                entry["attributes"] = dict(attributes)
+            output.append(entry)
+        elif (
+            output and isinstance(output[-1]["insert"], str)
+            and output[-1].get("attributes", {}) == attributes
+        ):
             output[-1]["insert"] += atom["text"]
         else:
             entry = {"insert": atom["text"]}
@@ -138,18 +166,38 @@ def apply_text_operation(node: dict[str, Any], op: OperationEnvelope) -> None:
             if (
                 not isinstance(item, dict)
                 or not {"id", "text"} <= set(item)
-                or set(item) - {"id", "text", "attributes"}
+                or set(item) - {"id", "text", "attributes", "embed"}
                 or not isinstance(item["text"], str)
                 or not 1 <= len(item["text"]) <= MAX_ATOM_TEXT
                 or any(0xD800 <= ord(char) <= 0xDFFF for char in item["text"])
             ):
                 raise TextSequenceError("Invalid text atom.")
             attributes = validate_attributes(item.get("attributes", {}))
+            if "embed" in item:
+                asset_id = _embed_asset_id(item["embed"], item["text"])
+                attachment = node.get("assets", {}).get(asset_id)
+                expected_mime = (
+                    "application/pdf" if "pdf" in item["embed"] else None
+                )
+                if expected_mime is None:
+                    allowed_mimes = {"image/png", "image/jpeg", "image/webp"}
+                else:
+                    allowed_mimes = {expected_mime}
+                if (
+                    not isinstance(attachment, dict)
+                    or attachment.get("mediaType") not in allowed_mimes
+                ):
+                    raise TextSequenceError(
+                        "Quill embed requires a matching attached asset."
+                    )
+            elif "\ufffc" in item["text"]:
+                raise TextSequenceError("Unlinked Quill object replacement.")
             atoms[item["id"]] = {
                 "after": anchor, "text": item["text"],
                 "deleted": False, "order": [*rank, index],
                 "attributes": dict(attributes),
                 "attributeVersions": {key: rank for key in attributes},
+                **({"embed": dict(item["embed"])} if "embed" in item else {}),
             }
             anchor = item["id"]
     elif op.kind == "text.delete":
