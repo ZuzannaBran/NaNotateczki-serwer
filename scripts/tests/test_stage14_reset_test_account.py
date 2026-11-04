@@ -99,7 +99,7 @@ class ResetTestAccountTest(unittest.TestCase):
         result = self.run_reset()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("current Flutter application", result.stdout)
-        self.assertIn("refresh sessions revoked", result.stdout)
+        self.assertIn("all existing tokens invalidated", result.stdout)
 
     def test_sql_is_single_owner_scoped_and_transactional(self):
         self.assertEqual(self.run_reset().returncode, 0)
@@ -111,6 +111,10 @@ class ResetTestAccountTest(unittest.TestCase):
         self.assertIn("account_sync_protocol", sql)
         self.assertIn("Unknown account tables", sql)
         self.assertIn("refresh_sessions", sql)
+        self.assertIn(
+            "UPDATE users SET auth_version = auth_version + 1 WHERE id = target;",
+            sql,
+        )
         deletes = re.findall(r"(?m)^\s*DELETE FROM [^;]+;", sql)
         self.assertGreaterEqual(len(deletes), 10)
         for stmt in deletes:
