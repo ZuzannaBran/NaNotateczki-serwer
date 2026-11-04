@@ -69,3 +69,18 @@ def test_unrecognized_marker_fails_closed():
         asyncio.run(require_legacy_protocol(session, owner))
     with pytest.raises(HTTPException):
         asyncio.run(require_v2_protocol(session, owner))
+
+
+def test_authenticated_protocol_probe_returns_account_mode():
+    from types import SimpleNamespace
+
+    from app.routers.auth import read_protocol
+
+    owner = uuid.uuid4()
+    user = SimpleNamespace(id=owner)
+    for marker, expected in ((None, "v1"), ("v2", "v2")):
+        session = ProtocolSession(marker)
+        assert asyncio.run(read_protocol(user, session)) == {
+            "protocol": expected,
+        }
+        assert session.queries == 1

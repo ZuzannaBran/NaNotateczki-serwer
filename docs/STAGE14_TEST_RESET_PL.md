@@ -103,3 +103,15 @@ testowym użytkowniku w izolowanej bazie i pełny test Flutter E2E.
 - Integracja host/guest, ustawień, backupu i logout z v2.
 - Testy dwóch prawdziwych urządzeń, awarii, backupu i restartu.
 - Dopiero potem usuwanie v1 routerów, timerów i zgodnościowego lustra.
+
+## Sonda kompatybilności starego klienta
+
+API udostępnia uwierzytelnione `GET /v1/auth/protocol` zwracające
+`{"protocol":"v1"}` albo `{"protocol":"v2"}`.
+Zaktualizowany klient Flutter sprawdza protokół **przed** recovery,
+synchronizacją snapshotów i uruchomieniem backupu v1. Konto v2 jest
+blokowane lokalnie z czytelnym błędem; nie oznacza to obsługi edycji v2.
+Stare serwery zwracające 404 pozostają kompatybilne z klientem v1.
+Inne błędy sondy (w tym brak sieci) wstrzymują inicjalizację sync,
+nie kasując lokalnych danych. Serwerowe blokady transakcyjne v1/v2
+pozostają obowiązujące, nawet jeżeli wynik sondy zestarzeje się.

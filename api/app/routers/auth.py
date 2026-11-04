@@ -6,6 +6,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_protocol import account_protocol
 from ..database import database_session
 from ..models import RefreshSession, User
 from ..rate_limit import auth_limiter
@@ -165,3 +166,12 @@ async def change_password(
 @router.get("/me")
 async def me(user: User = Depends(current_user)) -> dict:
     return {"userId": str(user.id), "username": user.username}
+
+
+@router.get("/protocol")
+async def read_protocol(
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    """Expose only the authenticated account's persisted sync protocol."""
+    return {"protocol": await account_protocol(session, user.id)}
