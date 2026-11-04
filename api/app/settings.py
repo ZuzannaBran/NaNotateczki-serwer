@@ -24,6 +24,9 @@ class Settings(BaseSettings):
         default=64 * 1024 * 1024, alias="MAXIMUM_BACKUP_BYTES"
     )
     maximum_sync_bytes: int = 16 * 1024 * 1024
+    maximum_asset_bytes: int = Field(
+        default=64 * 1024 * 1024, alias="MAXIMUM_ASSET_BYTES", ge=1
+    )
     operations_v2_write_mode: Literal["disabled", "canary", "all"] = Field(
         default="disabled", alias="OPERATIONS_V2_WRITE_MODE"
     )
