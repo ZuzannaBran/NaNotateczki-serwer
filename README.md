@@ -133,6 +133,18 @@ Testy równoległości, odzyskiwania backupu oraz publicznego HTTPS/WSS przez
 Cloudflare nadal wymagają odrębnej weryfikacji. Matryca i instrukcje:
 `TESTING.md`.
 
+## Etap 13 — wdrożenie produkcyjne (jeszcze zablokowane)
+
+Procedura, bezpieczna flaga canary, test odtworzenia PostgreSQL+assetów
+oraz monitoring: [docs/STAGE13_PRODUCTION_ROLLOUT_PL.md](docs/STAGE13_PRODUCTION_ROLLOUT_PL.md).
+Domyślnie `OPERATIONS_V2_WRITE_MODE=disabled`; nie przełączać istniejących
+kont, dopóki etap 11 nie ma aktywnego cutover, a etap 12 zaliczonych E2E.
+Lokalna walidacja archiwum bez Dockera:
+
+```bash
+python3 -m unittest discover -s scripts/tests -p 'test_stage13_backup_check.py'
+```
+
 ## Etap 12 — testy prawdziwego PostgreSQL i WebSocket (bez produkcji)
 
 Na komputerze testowym z Docker Compose v2 i Pythonem 3:
