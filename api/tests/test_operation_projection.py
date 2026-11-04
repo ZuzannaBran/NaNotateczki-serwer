@@ -113,15 +113,21 @@ def test_folder_tombstone_cannot_be_recreated():
         apply(state, op(4, "folder.create", doc="@library", target="f"), deleted)
 
 
-def test_reject_unimplemented_rich_text_and_unverified_assets():
+def test_text_atoms_are_applied_but_unverified_assets_remain_disabled():
     state, deleted = seeded()
-    for kind, payload in (
-        ("text.insert", {"afterAtomId": None, "atoms": []}),
-        ("asset.attach", {"assetId": "a", "sha256": "a" * 64}),
-    ):
-        with pytest.raises(ProjectionError, match="not enabled"):
-            apply(state, op(3, kind, page="p", target="t", props=payload),
+    state = apply(state, op(3, "object.create", page="p", target="t",
+                            props={"value": {"objectType": "text", "text": ""}}),
                   deleted)
+    atom_id = "00000000-0000-4000-8000-000000000001"
+    state = apply(state, op(4, "text.insert", page="p", target="t",
+                            props={"afterAtomId": None, "atoms": [
+                                {"id": atom_id, "text": "Hello"}
+                            ]}), deleted)
+    assert state["pages"]["p"]["objects"]["t"]["properties"]["text"] == "Hello"
+
+    with pytest.raises(ProjectionError, match="not enabled"):
+        apply(state, op(5, "asset.attach", page="p", target="t",
+                        props={"assetId": "a", "sha256": "a" * 64}), deleted)
 
 
 def test_reject_modified_delete_payload_and_missing_properties():
@@ -149,7 +155,7 @@ def test_reject_extra_payload_fields_in_v2_projection():
 def test_reject_identity_changes_in_v2_projection():
     state, deleted = seeded()
     for field in ("id", "uid"):
-        with pytest.raises(ProjectionError, match="Stable IDs"):
+        with pytest.raises(ProjectionError, match="Identity"):
             apply(
                 state,
                 op(3, "page.set", target="p",
