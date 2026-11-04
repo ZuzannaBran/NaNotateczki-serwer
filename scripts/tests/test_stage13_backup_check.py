@@ -28,6 +28,7 @@ class BackupCheckTest(unittest.TestCase):
             ("compose.public.yaml", b"services:\n"),
             ("Caddyfile", b"test"),
             ("migrations/", None),
+            ("migrations/0001.sql", b"SELECT 1;"),
         ])
         self.manifest()
 
@@ -102,6 +103,16 @@ class BackupCheckTest(unittest.TestCase):
         ])
         self.manifest()
         with self.assertRaisesRegex(BackupError, "Unexpected"):
+            check_backup(self.backup)
+
+    def test_missing_migrations_are_rejected(self):
+        self.write_archive("deployment-metadata.tar.gz", [
+            ("compose.yaml", b"compose"),
+            ("compose.public.yaml", b"compose"),
+            ("Caddyfile", b"caddy"),
+        ])
+        self.manifest()
+        with self.assertRaisesRegex(BackupError, "migration"):
             check_backup(self.backup)
 
     def test_reject_duplicate_manifest(self):
