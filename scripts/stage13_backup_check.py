@@ -137,6 +137,9 @@ def check_backup(directory: Path, asset_restore: Path | None = None) -> dict:
                         pass
         if not {"compose.yaml", "compose.public.yaml", "Caddyfile"}.issubset(seen):
             raise BackupError("Missing deployment configuration")
+        if not any(name.startswith("migrations/") and name.endswith(".sql")
+                   for name in seen):
+            raise BackupError("Missing SQL migration files")
     return {"asset_files": files, "asset_bytes": size}
 
 
