@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_protocol import require_legacy_protocol
 from ..database import database_session
 from ..models import AccountSettings, User
 from ..realtime_hub import hub
@@ -119,6 +120,7 @@ async def put_account_settings(
     # Lock the account row even when this category has not been created.
     # This serializes two first writes and makes the revision check atomic.
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await require_legacy_protocol(session, user.id)
     record = await session.get(AccountSettings, (user.id, category))
     current_revision = record.revision if record is not None else 0
     if body.expectedRevision != current_revision:
