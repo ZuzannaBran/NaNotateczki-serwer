@@ -133,6 +133,16 @@ Testy równoległości, odzyskiwania backupu oraz publicznego HTTPS/WSS przez
 Cloudflare nadal wymagają odrębnej weryfikacji. Matryca i instrukcje:
 `TESTING.md`.
 
+## Wymagany marker protokołu konta (migracja 0013)
+
+Nowy backend po migracji 0013 używa trwałego `account_sync_protocol`.
+Konto bez wiersza działa wyłącznie na starym zapisie v1; sam
+`OPERATIONS_V2_WRITE_MODE=canary` **nie wystarcza** do włączenia v2.
+Pusty, nowy właściciel testowy może zostać aktywowany jedynie podczas
+wyłączenia API przez `scripts/stage13-activate-empty-canary.sh`.
+Istniejące konta potrzebują bezstratnej migracji i nadal nie wolno ich
+przełączać. Użyj procedury w `docs/STAGE13_PRODUCTION_ROLLOUT_PL.md`.
+
 ## Etap 13 — wdrożenie produkcyjne (jeszcze zablokowane)
 
 Procedura, bezpieczna flaga canary, test odtworzenia PostgreSQL+assetów
