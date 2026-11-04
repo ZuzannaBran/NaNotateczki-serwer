@@ -254,6 +254,20 @@ Po utracie połączenia klient pobiera pełny stan serwera i uzgadnia go
 z trwałymi lokalnymi zmianami offline.
 
 
+## Etap 14 — reset danych konta testowego do v2
+
+Jeśli wszystkie dane konkretnego konta są przeznaczone do usunięcia,
+użyj po backupie i zatrzymaniu API zabezpieczonego skryptu
+`scripts/stage14-reset-test-account-v2.sh` z UUID, nazwą i jawnym
+potwierdzeniem `WIPE-UUID`. Podczas jednej transakcji czyści stan v1,
+sesje i kolejki tego konta oraz wstawia marker v2. Nie usuwa innych kont.
+Zapisy v1 ustawień, kalendarza, Share i backupów zostały także objęte
+blokadą protokołu, aby starsze urządzenia nie odtworzyły stanu po resecie.
+**Uwaga:** obecny interfejs Flutter nadal używa v1; skrypt pozwala
+testować v2 przez API, ale sam nie migruje edytora. Nie resetuj normalnego
+konta przed migracją klienta. Szczegóły:
+[docs/STAGE14_TEST_RESET_PL.md](docs/STAGE14_TEST_RESET_PL.md).
+
 ## Etap 14 — audyt wycofania legacy (bez usuwania v1)
 
 Po wdrożeniu migracji 0013 można wykonać odczytowy audyt:
