@@ -287,12 +287,6 @@ def apply_operation(
             or destination_id == op.page_id
         ):
             raise ProjectionError("Invalid object.move destination.")
-        destination_page = pages.get(destination_id)
-        if destination_page is None or (
-            "page", "", destination_id
-        ) in tombstones:
-            raise ProjectionError("Destination page does not exist.")
-
         # A competing actor may have moved the object away already.
         # Resolve all locations before trusting the stale source page.
         owners = [
@@ -311,7 +305,13 @@ def apply_operation(
             }:
                 raise ProjectionError("Corrupt persisted move version.")
             if rank <= previous["rank"]:
+                # A losing operation must not resurrect a removed destination.
                 return current, None
+        destination_page = pages.get(destination_id)
+        if destination_page is None or (
+            "page", "", destination_id
+        ) in tombstones:
+            raise ProjectionError("Destination page does not exist.")
         if actual_source != op.page_id:
             if (
                 previous is None
