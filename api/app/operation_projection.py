@@ -345,6 +345,10 @@ def apply_operation(
                     raise ProjectionError(
                         "Cannot detach or replace an embedded asset."
                     )
+            if kind == "asset.detach" and (
+                node.get("properties", {}).get("assetId") == asset_id
+            ):
+                raise ProjectionError("Cannot detach the active image asset.")
             if kind == "asset.attach":
                 assets[asset_id] = {
                     "sha256": payload["sha256"],
@@ -366,6 +370,16 @@ def apply_operation(
         return current, None
     if "textAtoms" in node and ({"text", "delta"} & fields.keys()):
         raise ProjectionError("CRDT text cannot be replaced by object.set.")
+    if "assetId" in fields:
+        if (
+            node.get("type") != "object.create"
+            or node.get("properties", {}).get("objectType") != "image"
+            or not isinstance(fields["assetId"], str)
+            or fields["assetId"] not in node.get("assets", {})
+        ):
+            raise ProjectionError(
+                "Image asset replacement needs a verified attachment."
+            )
     _merge(node, fields, op)
     return current, None
 

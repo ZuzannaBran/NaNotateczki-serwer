@@ -139,6 +139,58 @@ def test_verified_attach_and_detach_and_z_order_converge():
     assert state["pages"]["page"]["objects"]["image"]["assets"] == {}
 
 
+
+def test_replacement_requires_verified_attach_and_detach_after_switch():
+    state = seeded()
+    state, _ = apply_operation(
+        state, operation(
+            4, "asset.attach", attach_payload(), page="page", obj="image",
+        ), set(), verified_assets=frozenset({DIGEST})
+    )
+    bad = operation(
+        5, "object.set", {"properties": {"assetId": "unverified"}},
+        page="page", obj="image",
+    )
+    with pytest.raises(ProjectionError, match="verified attachment"):
+        apply_operation(state, bad, set())
+    state, _ = apply_operation(
+        state, operation(
+            6, "object.set", {"properties": {"assetId": "primary"}},
+            page="page", obj="image",
+        ), set()
+    )
+    with pytest.raises(ProjectionError, match="active image"):
+        apply_operation(state, operation(
+            7, "asset.detach", {"assetId": "primary"},
+            page="page", obj="image",
+        ), set())
+    second_digest = "b" * 64
+    new_payload = {
+        "assetId": "replacement", "sha256": second_digest,
+        "sizeBytes": 11, "mediaType": "image/png",
+    }
+    state, _ = apply_operation(
+        state, operation(
+            8, "asset.attach", new_payload, page="page", obj="image",
+        ), set(), verified_assets=frozenset({second_digest})
+    )
+    state, _ = apply_operation(
+        state, operation(
+            9, "object.set", {"properties": {"assetId": "replacement"}},
+            page="page", obj="image",
+        ), set()
+    )
+    state, _ = apply_operation(
+        state, operation(
+            10, "asset.detach", {"assetId": "primary"},
+            page="page", obj="image",
+        ), set()
+    )
+    node = state["pages"]["page"]["objects"]["image"]
+    assert node["properties"]["assetId"] == "replacement"
+    assert set(node["assets"]) == {"replacement"}
+
+
 def test_malformed_attach_or_detach_rejected():
     state = seeded()
     for kind, payload in [
