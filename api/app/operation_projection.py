@@ -292,16 +292,48 @@ def apply_operation(
             "page", "", destination_id
         ) in tombstones:
             raise ProjectionError("Destination page does not exist.")
-        if op.object_id not in objects:
-            raise ProjectionError("Source object does not exist.")
+
+        # A competing actor may have moved the object away already.
+        # Resolve all locations before trusting the stale source page.
+        owners = [
+            (page_id, page_node["objects"][op.object_id])
+            for page_id, page_node in pages.items()
+            if op.object_id in page_node.get("objects", {})
+        ]
+        if len(owners) != 1:
+            raise ProjectionError("Move target is missing or ambiguous.")
+        actual_source, moved = owners[0]
+        previous = moved.get("lastMove")
+        rank = list(precedence(op))
+        if previous is not None:
+            if not isinstance(previous, dict) or set(previous) != {
+                "rank", "actorId", "operationId"
+            }:
+                raise ProjectionError("Corrupt persisted move version.")
+            if rank <= previous["rank"]:
+                return current, None
+        if actual_source != op.page_id:
+            if (
+                previous is None
+                or previous["actorId"] == op.actor_id
+                or previous["operationId"] in op.dependencies
+            ):
+                raise ProjectionError("Causal move source is inconsistent.")
+        if ("object", destination_id, op.object_id or "") in tombstones:
+            raise ProjectionError("Destination identity was deleted.")
         destination_objects = destination_page.setdefault("objects", {})
-        if op.object_id in destination_objects or (
-            "object", destination_id, op.object_id or ""
-        ) in tombstones:
+        if (op.object_id in destination_objects
+                and actual_source != destination_id):
             raise ProjectionError("Destination identity is occupied.")
-        moved = objects.pop(op.object_id)
+        if actual_source != destination_id:
+            pages[actual_source]["objects"].pop(op.object_id)
+            destination_objects[op.object_id] = moved
         _merge(moved, {"sortIndex": sort_index}, op)
-        destination_objects[op.object_id] = moved
+        moved["lastMove"] = {
+            "rank": rank,
+            "actorId": op.actor_id,
+            "operationId": op.operation_id,
+        }
         return current, None
     if kind == "object.delete":
         objects.pop(op.object_id, None)

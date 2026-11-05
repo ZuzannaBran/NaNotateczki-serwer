@@ -130,6 +130,52 @@ def test_object_moves_between_pages_without_losing_properties():
     ]
 
 
+def test_concurrent_moves_converge_regardless_of_delivery_order():
+    state = seeded_text()
+    state = apply(state, op(4, "page.create", {"value": {}}, obj="p2"))
+    state = apply(state, op(5, "page.create", {"value": {}}, obj="p3"))
+    state = apply(state, op(6, "stroke.create", {
+        "value": {"points": [1, 2], "sortIndex": 0},
+    }, page="p", obj="ink"))
+    first = op(
+        7, "object.move", {"toPageId": "p2", "sortIndex": 2},
+        page="p", obj="ink", actor="alice", clock=100,
+    )
+    second = op(
+        8, "object.move", {"toPageId": "p3", "sortIndex": 3},
+        page="p", obj="ink", actor="zed", clock=100,
+    )
+    left = apply(apply(deepcopy(state), first), second)
+    right = apply(apply(deepcopy(state), second), first)
+    assert left == right
+    assert "ink" not in left["pages"]["p"]["objects"]
+    assert "ink" not in left["pages"]["p2"]["objects"]
+    assert left["pages"]["p3"]["objects"]["ink"]["properties"][
+        "sortIndex"
+    ] == 3
+
+
+def test_causal_move_must_name_the_actual_source_after_prior_move():
+    state = seeded_text()
+    state = apply(state, op(4, "page.create", {"value": {}}, obj="p2"))
+    state = apply(state, op(5, "page.create", {"value": {}}, obj="p3"))
+    state = apply(state, op(6, "stroke.create", {
+        "value": {"points": [1, 2], "sortIndex": 0},
+    }, page="p", obj="ink"))
+    first = op(
+        7, "object.move", {"toPageId": "p2", "sortIndex": 2},
+        page="p", obj="ink", actor="alice", clock=100,
+    )
+    state = apply(state, first)
+    stale = op(
+        8, "object.move", {"toPageId": "p3", "sortIndex": 3},
+        page="p", obj="ink", actor="alice", clock=101,
+        reverts=first.operation_id,
+    )
+    with pytest.raises(ProjectionError, match="Causal move source"):
+        apply(state, stale)
+
+
 def test_invalid_move_preserves_source_and_destination():
     state = seeded_text()
     before = deepcopy(state)
