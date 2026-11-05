@@ -1,5 +1,12 @@
 # Testy komunikacji i wspólnej edycji sesji
 
+## Regresja operacji v2 — 2026-11-06
+
+`api/tests/test_stage2_editor_operations.py` sprawdza, że opóźniony,
+przegrywający `object.move` nie sprawdza już usuniętej strony docelowej.
+Scenariusz zachowuje tombstone zwrócony przez `page.delete` i przekazuje
+go do kolejnej projekcji, zgodnie z rzeczywistą transakcją serwera.
+
 ## Bez działającego serwera
 
 W katalogu `server/` (lub w katalogu głównym repo `NaNotateczki-serwer`):

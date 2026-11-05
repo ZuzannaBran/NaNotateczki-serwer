@@ -167,12 +167,17 @@ def test_losing_old_move_ignores_its_now_deleted_destination():
         page="p", obj="ink", actor="zed", clock=100,
     )
     state = apply(state, winner)
-    state = apply(state, op(9, "page.delete", {}, obj="p3"))
+    state, marker = apply_operation(
+        state, op(9, "page.delete", {}, obj="p3"), set(),
+    )
+    assert marker == ("page", "", "p3")
+    assert "p3" not in state["pages"]
     losing = op(
         7, "object.move", {"toPageId": "p3", "sortIndex": 2},
         page="p", obj="ink", actor="alice", clock=100,
     )
-    after = apply(state, losing)
+    after, new_marker = apply_operation(deepcopy(state), losing, {marker})
+    assert new_marker is None
     assert after == state
 
 
