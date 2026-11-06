@@ -27,12 +27,25 @@ def _require_disposable_database():
     if (
         url.hostname not in {"localhost", "127.0.0.1"}
         or url.path != "/nanotateczki_stage12_test"
+        or url.username != "nano_app"
     ):
         pytest.fail("Refusing to run Stage 12 against a non-disposable DB")
+    fixture_url = os.environ.get("NN_STAGE12_FIXTURE_DATABASE_URL")
+    if not fixture_url:
+        pytest.fail("Missing isolated Stage 12 fixture database URL")
+    fixture = urlsplit(fixture_url.replace("+asyncpg", ""))
+    if (
+        fixture.hostname != url.hostname
+        or fixture.port != url.port
+        or fixture.path != url.path
+        or fixture.username != "stage12_admin"
+    ):
+        pytest.fail("Stage 12 fixture database must match the disposable DB")
 
 
 async def _execute_sql(sql, parameters):
-    engine = create_async_engine(get_settings().database_url)
+    _require_disposable_database()
+    engine = create_async_engine(os.environ["NN_STAGE12_FIXTURE_DATABASE_URL"])
     try:
         async with engine.begin() as connection:
             await connection.execute(text(sql), parameters)

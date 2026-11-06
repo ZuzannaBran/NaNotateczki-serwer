@@ -53,6 +53,8 @@ fi
 python3 -m venv "$work/venv"
 "$work/venv/bin/python" -m pip install -q -r api/requirements.txt
 export DATABASE_URL="postgresql+asyncpg://nano_app:stage12-local-only@127.0.0.1:$port/nanotateczki_stage12_test"
+# Privileged fixture writes are isolated from the read-only application role.
+export NN_STAGE12_FIXTURE_DATABASE_URL="postgresql+asyncpg://stage12_admin:stage12-disposable-only@127.0.0.1:$port/nanotateczki_stage12_test"
 export APP_ORIGIN="https://app.example.test"
 export JWT_SECRET="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export ALLOW_REGISTRATION="false"
@@ -76,6 +78,8 @@ esac
 
 (cd api && "$work/venv/bin/python" -m pytest -q \
   tests/test_stage12_real_stack.py "${selection[@]}")
+# Do not expose the disposable administrator credentials to the HTTP API.
+unset NN_STAGE12_FIXTURE_DATABASE_URL
 
 # Optional full Flutter -> FastAPI -> PostgreSQL -> WebSocket test.
 if [[ -n "${NN_STAGE12_FLUTTER_ROOT:-}" ]]; then

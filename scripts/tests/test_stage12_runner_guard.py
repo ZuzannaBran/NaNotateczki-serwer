@@ -20,6 +20,18 @@ class Stage12RunnerUsernameTest(unittest.TestCase):
         username = "s12_" + "a" * maximum_suffix
         self.assertRegex(username, r"^[a-z0-9_]{3,32}$")
 
+    def test_admin_fixture_is_separate_from_read_only_api_role(self):
+        runner = RUNNER.read_text()
+        fixture = (RUNNER.parent.parent / "api/tests/test_stage12_real_stack.py").read_text()
+        self.assertIn('export DATABASE_URL="postgresql+asyncpg://nano_app:', runner)
+        self.assertIn('export NN_STAGE12_FIXTURE_DATABASE_URL=', runner)
+        self.assertIn("unset NN_STAGE12_FIXTURE_DATABASE_URL", runner)
+        self.assertIn('fixture.username != "stage12_admin"', fixture)
+        self.assertIn('url.username != "nano_app"', fixture)
+        self.assertIn("fixture.port != url.port", fixture)
+        self.assertIn('create_async_engine(os.environ["NN_STAGE12_FIXTURE_DATABASE_URL"])', fixture)
+        self.assertNotIn("GRANT INSERT ON account_sync_protocol", runner)
+
     def test_fixture_requires_disposable_account_protocol_marker(self):
         source = RUNNER.read_text()
         self.assertIn("INSERT INTO account_sync_protocol", source)
