@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import tempfile
 import uuid
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from app.asset_store import (
 )
 from app.operation_projection import ProjectionError, apply_operation
 from app.operation_protocol import OperationEnvelope
+from app.text_sequence import render_delta
 
 
 OWNER = uuid.UUID("11111111-1111-4111-8111-111111111111")
@@ -31,15 +33,19 @@ class FakeRequest:
         yield self.data[5:]
 
 
-def operation(n: int, kind: str, payload: dict, *, page=None, obj=None):
+def operation(n: int, kind: str, payload: dict, *, page=None, obj=None,
+              reverts=None):
     return OperationEnvelope.from_dict({
         "schemaVersion": 1,
         "operationId": str(uuid.UUID(int=n)),
         "actorId": "asset-test", "actorSeq": n,
         "documentId": "asset-document", "type": kind,
-        "payload": payload, "dependencies": [], "logicalClock": n,
+        "payload": payload,
+        "dependencies": [reverts] if reverts is not None else [],
+        "logicalClock": n,
         **({"pageId": page} if page is not None else {}),
         **({"objectId": obj} if obj is not None else {}),
+        **({"revertsOperationId": reverts} if reverts is not None else {}),
     })
 
 
@@ -204,3 +210,106 @@ def test_malformed_attach_or_detach_rejected():
                 state, operation(6, kind, payload, page="page", obj="image"),
                 set(), verified_assets=frozenset({DIGEST}),
             )
+
+
+@pytest.mark.parametrize("embed_type", ["image", "pdf"])
+@pytest.mark.parametrize("deleted_target", ["embed", "object", "page"])
+def test_quill_inverse_reuses_verified_asset_without_reviving_deleted_ids(
+    embed_type, deleted_target,
+):
+    state = seeded()
+    tombstones = set()
+    receipt = {
+        **attach_payload(),
+        "mediaType": "application/pdf" if embed_type == "pdf" else "image/png",
+    }
+
+    def commit(change, *, verified=False):
+        nonlocal state
+        state, marker = apply_operation(
+            deepcopy(state), change, tombstones,
+            verified_assets=frozenset({DIGEST}) if verified else frozenset(),
+        )
+        if marker is not None:
+            tombstones.add(marker)
+
+    commit(operation(4, "page.create", {"value": {}}, obj="other-page"))
+    commit(operation(5, "object.create", {"value": {"objectType": "text"}},
+                     page="page", obj="text"))
+    commit(operation(6, "asset.attach", receipt, page="page", obj="text"),
+           verified=True)
+    atoms = [
+        {"id": str(uuid.UUID(int=2000)), "text": "T",
+         "attributes": {"bold": True}},
+        *[{"id": str(uuid.UUID(int=n)), "text": "\ufffc",
+           "embed": {embed_type: "asset:primary"}} for n in (2001, 2002)],
+        {"id": str(uuid.UUID(int=2003)), "text": "\n"},
+    ]
+    commit(operation(7, "text.insert", {"afterAtomId": None, "atoms": atoms},
+                     page="page", obj="text"))
+    original = render_delta(state["pages"]["page"]["objects"]["text"][
+        "textAtoms"
+    ])
+    if deleted_target == "embed":
+        commit(operation(8, "text.delete", {
+            "atomIds": [atom["id"] for atom in atoms[1:3]],
+        }, page="page", obj="text"))
+        deleted = operation(9, "asset.detach", {"assetId": "primary"},
+                            page="page", obj="text")
+    elif deleted_target == "object":
+        deleted = operation(8, "object.delete", {}, page="page", obj="text")
+    else:
+        deleted = operation(8, "page.delete", {}, obj="page")
+    commit(deleted)
+    page = "restored-page" if deleted_target == "page" else "page"
+    obj = "text" if deleted_target == "embed" else "restored-text"
+    if deleted_target == "page":
+        commit(operation(10, "page.create", {"value": {}}, obj=page,
+                         reverts=deleted.operation_id))
+    if deleted_target != "embed":
+        commit(operation(11, "object.create", {"value": {"objectType": "text"}},
+                         page=page, obj=obj, reverts=deleted.operation_id))
+    attach = operation(12, "asset.attach", receipt, page=page, obj=obj,
+                       reverts=deleted.operation_id)
+    # A previous upload/owner does not bypass verification of this attachment.
+    with pytest.raises(ProjectionError, match="not verified"):
+        commit(attach)
+    commit(attach, verified=True)
+    restored_atoms = [
+        {**atom, "id": str(uuid.UUID(int=uuid.UUID(atom["id"]).int + 1000))}
+        for atom in (atoms[1:3] if deleted_target == "embed" else atoms)
+    ]
+    restored = operation(13, "text.insert", {
+        "afterAtomId": atoms[0]["id"] if deleted_target == "embed" else None,
+        "atoms": restored_atoms,
+    }, page=page, obj=obj, reverts=deleted.operation_id)
+    commit(restored)
+    node = state["pages"][page]["objects"][obj]
+    assert render_delta(node["textAtoms"]) == original
+    assert node["assets"] == {"primary": {
+        key: receipt[key] for key in ("sha256", "sizeBytes", "mediaType")
+    }}
+    assert restored.reverts_operation_id == deleted.operation_id
+    assert deleted.operation_id in restored.dependencies
+    if deleted_target == "embed":
+        commit(operation(14, "text.delete", {
+            "atomIds": [atom["id"] for atom in restored_atoms],
+        }, page=page, obj=obj, reverts=restored.operation_id))
+        commit(operation(15, "asset.detach", {"assetId": "primary"},
+                         page=page, obj=obj, reverts=restored.operation_id))
+        assert state["pages"][page]["objects"][obj]["assets"] == {}
+    elif deleted_target == "object":
+        assert ("object", "page", "text") in tombstones
+        commit(operation(14, "object.delete", {}, page=page, obj=obj,
+                         reverts=restored.operation_id))
+        assert obj not in state["pages"][page]["objects"]
+        with pytest.raises(ProjectionError, match="deleted"):
+            commit(operation(15, "object.create", {"value": {"objectType": "text"}},
+                             page="page", obj="text"))
+    else:
+        assert ("page", "", "page") in tombstones
+        commit(operation(14, "page.delete", {}, obj=page,
+                         reverts=restored.operation_id))
+        assert page not in state["pages"]
+        with pytest.raises(ProjectionError, match="deleted"):
+            commit(operation(15, "page.create", {"value": {}}, obj="page"))

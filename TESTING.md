@@ -2,6 +2,17 @@
 
 ## Regresja operacji v2 — 2026-11-06
 
+`api/tests/test_stage2_assets.py` obejmuje sześć kontraktów odtwarzania
+Quill: obraz/PDF × usunięcie embedu, obiektu lub strony. Inverse z nowymi
+ID atomów/właścicieli wskazuje cofany gest przez `revertsOperationId`
+i zależność. Przywrócenie zachowuje Delta oraz receipt tego samego pliku,
+ale nadal wymaga `verified_assets`; wcześniejszy upload nie omija
+kontroli kolejnego attach. Redo usuwa nową referencję/właściciela,
+a stary tombstone pozostaje nieodwracalny. To test projekcji serwera,
+nie pełne E2E Flutter–HTTP–PostgreSQL.
+Lokalny pełny zestaw po tym przyroście: **278 passed, 8 skipped**.
+Pominięte scenariusze wymagają PostgreSQL; nie uznano ich za zaliczone.
+
 `api/tests/test_stage2_editor_operations.py` sprawdza, że opóźniony,
 przegrywający `object.move` nie sprawdza już usuniętej strony docelowej.
 Scenariusz zachowuje tombstone zwrócony przez `page.delete` i przekazuje
