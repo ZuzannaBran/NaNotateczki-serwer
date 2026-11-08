@@ -197,6 +197,90 @@ def test_replacement_requires_verified_attach_and_detach_after_switch():
     assert set(node["assets"]) == {"replacement"}
 
 
+def test_asset_id_cannot_be_rebound_after_detach():
+    state = seeded()
+    payload = attach_payload()
+    state, _ = apply_operation(
+        state, operation(4, "asset.attach", payload, page="page", obj="image"),
+        set(), verified_assets=frozenset({DIGEST}),
+    )
+    state, _ = apply_operation(
+        state, operation(5, "asset.detach", {"assetId": "primary"},
+                         page="page", obj="image"), set(),
+    )
+    assert state["assetReceipts"]["primary"]["sha256"] == DIGEST
+    with pytest.raises(ProjectionError, match="already bound"):
+        apply_operation(
+            deepcopy(state),
+            operation(6, "asset.attach",
+                      {**payload, "sha256": "b" * 64},
+                      page="page", obj="image"),
+            set(), verified_assets=frozenset({"b" * 64}),
+        )
+    state, _ = apply_operation(
+        state, operation(7, "asset.attach", payload,
+                         page="page", obj="image"),
+        set(), verified_assets=frozenset({DIGEST}),
+    )
+    assert state["pages"]["page"]["objects"]["image"]["assets"][
+        "primary"
+    ]["sha256"] == DIGEST
+
+
+def test_asset_receipt_survives_owner_deletion_and_inverse():
+    state = seeded()
+    payload = attach_payload()
+    state, _ = apply_operation(
+        state, operation(4, "asset.attach", payload, page="page", obj="image"),
+        set(), verified_assets=frozenset({DIGEST}),
+    )
+    state, marker = apply_operation(
+        state, operation(5, "object.delete", {}, page="page", obj="image"),
+        set(),
+    )
+    assert marker == ("object", "page", "image")
+    state, _ = apply_operation(
+        state, operation(6, "object.create",
+                         {"value": {"objectType": "text"}},
+                         page="page", obj="restored"), {marker},
+    )
+    with pytest.raises(ProjectionError, match="already bound"):
+        apply_operation(
+            deepcopy(state),
+            operation(7, "asset.attach",
+                      {**payload, "sha256": "b" * 64},
+                      page="page", obj="restored"),
+            {marker}, verified_assets=frozenset({"b" * 64}),
+        )
+    state, _ = apply_operation(
+        state, operation(8, "asset.attach", payload,
+                         page="page", obj="restored"),
+        {marker}, verified_assets=frozenset({DIGEST}),
+    )
+    assert state["assetReceipts"]["primary"]["sha256"] == DIGEST
+
+
+def test_missing_historical_receipt_fails_closed():
+    state = seeded()
+    payload = attach_payload()
+    state, _ = apply_operation(
+        state, operation(4, "asset.attach", payload, page="page", obj="image"),
+        set(), verified_assets=frozenset({DIGEST}),
+    )
+    state, _ = apply_operation(
+        state, operation(5, "asset.detach", {"assetId": "primary"},
+                         page="page", obj="image"), set(),
+    )
+    state.pop("assetReceipts")
+    with pytest.raises(ProjectionError, match="no durable receipt"):
+        apply_operation(
+            deepcopy(state),
+            operation(6, "asset.attach", payload,
+                      page="page", obj="image"),
+            set(), verified_assets=frozenset({DIGEST}),
+        )
+
+
 def test_malformed_attach_or_detach_rejected():
     state = seeded()
     for kind, payload in [

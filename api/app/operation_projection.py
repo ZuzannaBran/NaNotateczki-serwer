@@ -85,6 +85,31 @@ def _validate_folder_graph(folders: dict) -> None:
         checked.update(visiting)
 
 
+def _remember_asset_receipt(
+    current: dict, pages: dict, asset_id: str, receipt: dict,
+) -> None:
+    """Preserve the document-wide asset binding after detach and delete."""
+    receipts = current.setdefault("assetReceipts", {})
+    if not isinstance(receipts, dict):
+        raise ProjectionError("Corrupt persisted asset receipts.")
+    known = receipts.get(asset_id)
+    if known is not None and known != receipt:
+        raise ProjectionError("Asset ID was already bound to other bytes.")
+    if known is not None:
+        return
+
+    # Earlier snapshots lack the receipt ledger. Existing attachments
+    # can establish their identity, but detached old IDs cannot be trusted.
+    for page in pages.values():
+        for node in page.get("objects", {}).values():
+            previous = node.get("assets", {}).get(asset_id)
+            if previous is not None and previous != receipt:
+                raise ProjectionError("Asset ID was already bound to other bytes.")
+            if previous is None and asset_id in node.get("assetVersions", {}):
+                raise ProjectionError("Asset ID has no durable receipt.")
+    receipts[asset_id] = dict(receipt)
+
+
 def apply_operation(
     current: dict | None,
     op: OperationEnvelope,
@@ -372,6 +397,12 @@ def apply_operation(
         asset_id = payload["assetId"]
         rank = list(precedence(op))
         versions = node.setdefault("assetVersions", {})
+        if kind == "asset.attach":
+            receipt = {
+                key: payload[key]
+                for key in ("sha256", "sizeBytes", "mediaType")
+            }
+            _remember_asset_receipt(current, pages, asset_id, receipt)
         if asset_id not in versions or rank > versions[asset_id]:
             assets = node.setdefault("assets", {})
             if kind == "asset.detach" or (

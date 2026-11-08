@@ -1,5 +1,16 @@
 # Stage 4 — PostgreSQL operation journal and API v2
 
+## Trwałe receipty assetów (2026-11-08)
+
+Materializowany stan v2 przechowuje `assetReceipts` dla całego dokumentu.
+Identyfikator assetu nie może zmienić SHA-256, rozmiaru ani MIME
+po `asset.detach`, usunięciu obiektu lub przeniesieniu do innego obiektu.
+To samo zweryfikowane ID może być ponownie użyte przez Undo/Redo.
+Stary snapshot z odłączonym ID i bez historycznego receiptu blokuje
+ponowne przypięcie zamiast zgadywać bajty. Dotyczy wyłącznie v2,
+bez modyfikacji schematu i API v1.
+
+
 **Deployment state:** committed as an opt-in backend capability. Existing v1
 notebook synchronization, device backups and Share clients stay on v1. No
 automatic migration of existing notebooks occurs in this stage.
