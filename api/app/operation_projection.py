@@ -264,6 +264,27 @@ def apply_operation(
         _merge(node, fields, op)
         return current, None
 
+    # A moved object retains its globally unique ID. Historical page-scoped
+    # tombstones must also prevent reuse on other pages.
+    was_deleted = any(
+        kind == "object" and object_id == op.object_id
+        for kind, _, object_id in tombstones
+    )
+    if was_deleted:
+        if is_create:
+            raise ProjectionError("Object ID was deleted.")
+        return current, None
+    if kind == "object.delete":
+        owners = [
+            page_node["objects"]
+            for page_node in pages.values()
+            if op.object_id in page_node.get("objects", {})
+        ]
+        if len(owners) > 1:
+            raise ProjectionError("Object delete target is ambiguous.")
+        if owners:
+            owners[0].pop(op.object_id)
+        return current, object_key
     if ("page", "", op.page_id or "") in tombstones:
         if is_create:
             raise ProjectionError("Parent page was deleted.")
@@ -335,16 +356,12 @@ def apply_operation(
             "operationId": op.operation_id,
         }
         return current, None
-    if kind == "object.delete":
-        objects.pop(op.object_id, None)
-        return current, object_key if object_key not in tombstones else None
-    if object_key in tombstones:
-        if is_create:
-            raise ProjectionError("Object ID was deleted.")
-        return current, None
     node = objects.get(op.object_id)
     if is_create:
-        if node is not None:
+        if any(
+            op.object_id in candidate.get("objects", {})
+            for candidate in pages.values()
+        ):
             raise ProjectionError("Object ID already used.")
         node = _new_node()
         node["type"] = kind

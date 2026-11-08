@@ -489,3 +489,56 @@ def test_socket_reconnect_recovers_missed_feed(client):
         assert websocket.receive_json()["type"] == "operations_changed"
     state = snapshot(client, token, document)["state"]["pages"][page]
     assert set(state["objects"]) == {"offline-1", "offline-2"}
+
+
+def test_stale_page_delete_after_move_removes_visible_object(client):
+    _, token = identity()
+    document, source, _, seed = initial_document(client, token)
+    destination = "target-" + uuid.uuid4().hex
+    creator = Actor(document, "create-" + uuid.uuid4().hex, clock=2)
+    new_page = creator.next(
+        "page.create", target=destination, payload={"value": {"name": "Next"}},
+        after=[seed["operationId"]],
+    )
+    submit(client, token, [new_page])
+    object_id = "moved-" + uuid.uuid4().hex
+    created = creator.next(
+        "stroke.create", target=object_id, page=source,
+        payload={"value": {"x": 2}},
+    )
+    submit(client, token, [created])
+    mover = Actor(document, "move-" + uuid.uuid4().hex, clock=5)
+    moved = mover.next(
+        "object.move", target=object_id, page=source,
+        payload={"toPageId": destination, "sortIndex": 0},
+        after=[created["operationId"]],
+    )
+    submit(client, token, [moved])
+    deleter = Actor(document, "delete-" + uuid.uuid4().hex, clock=6)
+    deleted = deleter.next(
+        "object.delete", target=object_id, page=source,
+        payload={}, after=[created["operationId"]],
+    )
+    submit(client, token, [deleted])
+    state = snapshot(client, token, document)["state"]
+    assert all(
+        object_id not in page["objects"] for page in state["pages"].values()
+    )
+
+    # A move issued without observing the deletion must remain a no-op.
+    stale = mover.next(
+        "object.move", target=object_id, page=source,
+        payload={"toPageId": destination, "sortIndex": 1},
+    )
+    submit(client, token, [stale])
+    creator.clock = deleted["logicalClock"]
+    recycled = creator.next(
+        "stroke.create", target=object_id, page=destination,
+        payload={"value": {"x": 7}},
+        after=[deleted["operationId"]],
+    )
+    submit(client, token, [recycled], status=422)
+    state = snapshot(client, token, document)["state"]
+    assert all(
+        object_id not in page["objects"] for page in state["pages"].values()
+    )

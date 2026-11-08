@@ -278,3 +278,78 @@ def test_task_requires_planner_and_rejects_unverified_identity():
             None, op(421, "task.create", doc="@library", target="bad",
                      props={"value": {"plannerUid": 123}}), deleted
         )
+
+
+def test_stale_source_delete_removes_moved_object_and_blocks_recreation():
+    state, deleted = seeded()
+    state = apply(state, op(3, "page.create", target="destination"), deleted)
+    state = apply(state, op(4, "stroke.create", page="p", target="moved"),
+                  deleted)
+    state = apply(state, op(
+        5, "object.move", page="p", target="moved",
+        props={"toPageId": "destination", "sortIndex": 1},
+    ), deleted)
+    assert "moved" in state["pages"]["destination"]["objects"]
+
+    # The deleting device still sees the old source page.
+    state = apply(state, op(6, "object.delete", page="p", target="moved"),
+                  deleted)
+    assert all(
+        "moved" not in page["objects"] for page in state["pages"].values()
+    )
+    assert ("object", "p", "moved") in deleted
+
+    # Stale edits, late moves and creations must not resurrect the UID.
+    state = apply(
+        state, op(7, "object.set", page="destination", target="moved"), deleted
+    )
+    state = apply(state, op(
+        8, "object.move", page="p", target="moved",
+        props={"toPageId": "destination", "sortIndex": 2},
+    ), deleted)
+    assert all(
+        "moved" not in page["objects"] for page in state["pages"].values()
+    )
+    with pytest.raises(ProjectionError, match="deleted"):
+        apply(state, op(
+            9, "stroke.create", page="destination", target="moved",
+        ), deleted)
+
+
+def test_delete_after_source_page_removed_still_reclaims_moved_uid():
+    state, deleted = seeded()
+    state = apply(state, op(3, "page.create", target="destination"), deleted)
+    state = apply(state, op(4, "stroke.create", page="p", target="moved"),
+                  deleted)
+    state = apply(state, op(
+        5, "object.move", page="p", target="moved",
+        props={"toPageId": "destination", "sortIndex": 1},
+    ), deleted)
+    state = apply(state, op(6, "page.delete", target="p"), deleted)
+    state = apply(state, op(7, "object.delete", page="p", target="moved"),
+                  deleted)
+    assert "moved" not in state["pages"]["destination"]["objects"]
+
+
+def test_delete_before_concurrent_move_stays_deleted():
+    state, deleted = seeded()
+    state = apply(state, op(3, "page.create", target="other"), deleted)
+    state = apply(state, op(4, "stroke.create", page="p", target="uid"),
+                  deleted)
+    state = apply(state, op(5, "object.delete", page="p", target="uid"),
+                  deleted)
+    state = apply(state, op(
+        6, "object.move", page="p", target="uid",
+        props={"toPageId": "other", "sortIndex": 0},
+    ), deleted)
+    assert all("uid" not in page["objects"] for page in state["pages"].values())
+
+
+def test_object_uid_cannot_be_created_twice_across_pages():
+    state, deleted = seeded()
+    state = apply(state, op(3, "page.create", target="other"), deleted)
+    state = apply(state, op(4, "stroke.create", page="p", target="uid"),
+                  deleted)
+    with pytest.raises(ProjectionError, match="already used"):
+        apply(state, op(5, "stroke.create", page="other", target="uid"),
+              deleted)
