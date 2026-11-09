@@ -1,5 +1,23 @@
 # Stage 4 — PostgreSQL operation journal and API v2
 
+## Shared immutable asset receipts and rollback (2026-11-09)
+
+Two independent object owners can attach one asset ID when both
+operations carry the same verified SHA-256, byte count and MIME type.
+Any conflicting receipt remains invalid, even if another object owns
+the ID. Regression tests cover independent owners and incompatible
+bytes, sizes and MIME types.
+
+The reducer now validates a conflicting receipt before adding an
+assetVersions field to its target node. When importing a legacy
+snapshot without assetReceipts, a failed validation no longer
+creates an empty receipt ledger in memory. Neither the old projection
+nor the original operation IDs are rewritten. The same projector and
+regressions are mirrored in the NaNotateczki/dev tree.
+
+These changes do not enable the v1/v2 cutover. Backend and mirrored
+Python tests require the next CI result.
+
 ## Quill CRDT integrity checks (2026-11-09)
 
 The Python reducer validates stored atom ranks, parent identifiers and

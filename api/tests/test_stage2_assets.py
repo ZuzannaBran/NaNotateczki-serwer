@@ -296,6 +296,81 @@ def test_malformed_attach_or_detach_rejected():
             )
 
 
+def test_verified_asset_identity_can_be_shared_by_two_owners():
+    state = seeded()
+    state, _ = apply_operation(
+        state, operation(4, "object.create",
+                         {"value": {"objectType": "text"}},
+                         page="page", obj="text-other"), set(),
+    )
+    for sequence, owner in ((5, "image"), (6, "text-other")):
+        state, _ = apply_operation(
+            state, operation(sequence, "asset.attach", attach_payload(),
+                             page="page", obj=owner),
+            set(), verified_assets=frozenset({DIGEST}),
+        )
+    for owner in ("image", "text-other"):
+        assert state["pages"]["page"]["objects"][owner]["assets"][
+            "primary"
+        ]["sha256"] == DIGEST
+    assert state["assetReceipts"]["primary"]["sha256"] == DIGEST
+
+
+@pytest.mark.parametrize("changes", [
+    {"sha256": "b" * 64},
+    {"sizeBytes": len(PNG) + 1},
+    {"mediaType": "application/pdf"},
+])
+def test_shared_asset_identity_rejects_conflicting_receipts(changes):
+    state = seeded()
+    state, _ = apply_operation(
+        state, operation(4, "object.create",
+                         {"value": {"objectType": "text"}},
+                         page="page", obj="text-other"), set(),
+    )
+    state, _ = apply_operation(
+        state, operation(5, "asset.attach", attach_payload(),
+                         page="page", obj="image"),
+        set(), verified_assets=frozenset({DIGEST}),
+    )
+    before = deepcopy(state)
+    with pytest.raises(ProjectionError, match="already bound"):
+        apply_operation(
+            state, operation(6, "asset.attach",
+                             {**attach_payload(), **changes},
+                             page="page", obj="text-other"),
+            set(), verified_assets=frozenset({DIGEST, "b" * 64}),
+        )
+    assert state == before
+
+
+def test_rejected_legacy_alias_does_not_insert_an_empty_receipt_ledger():
+    state = seeded()
+    state, _ = apply_operation(
+        state, operation(4, "object.create",
+                         {"value": {"objectType": "text"}},
+                         page="page", obj="text-other"), set(),
+    )
+    state, _ = apply_operation(
+        state, operation(5, "asset.attach", attach_payload(),
+                         page="page", obj="image"),
+        set(), verified_assets=frozenset({DIGEST}),
+    )
+    # A v2 snapshot that predates the document-wide receipt ledger must
+    # not acquire a partial ledger when an incompatible attach fails.
+    state.pop("assetReceipts")
+    before = deepcopy(state)
+    with pytest.raises(ProjectionError, match="already bound"):
+        apply_operation(
+            state, operation(6, "asset.attach",
+                             {**attach_payload(), "sha256": "b" * 64},
+                             page="page", obj="text-other"),
+            set(), verified_assets=frozenset({"b" * 64}),
+        )
+    assert state == before
+    assert "assetReceipts" not in state
+
+
 @pytest.mark.parametrize("embed_type", ["image", "pdf"])
 @pytest.mark.parametrize("deleted_target", ["embed", "object", "page"])
 def test_quill_inverse_reuses_verified_asset_without_reviving_deleted_ids(

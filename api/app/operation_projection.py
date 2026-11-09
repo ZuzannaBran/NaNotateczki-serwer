@@ -89,7 +89,9 @@ def _remember_asset_receipt(
     current: dict, pages: dict, asset_id: str, receipt: dict,
 ) -> None:
     """Preserve the document-wide asset binding after detach and delete."""
-    receipts = current.setdefault("assetReceipts", {})
+    # An invalid receipt must not create an empty ledger in the caller's
+    # in-memory projection before the transaction is rejected.
+    receipts = current.get("assetReceipts", {})
     if not isinstance(receipts, dict):
         raise ProjectionError("Corrupt persisted asset receipts.")
     known = receipts.get(asset_id)
@@ -107,7 +109,7 @@ def _remember_asset_receipt(
                 raise ProjectionError("Asset ID was already bound to other bytes.")
             if previous is None and asset_id in node.get("assetVersions", {}):
                 raise ProjectionError("Asset ID has no durable receipt.")
-    receipts[asset_id] = dict(receipt)
+    current.setdefault("assetReceipts", {})[asset_id] = dict(receipt)
 
 
 def apply_operation(
@@ -396,13 +398,13 @@ def apply_operation(
     if kind.startswith("asset."):
         asset_id = payload["assetId"]
         rank = list(precedence(op))
-        versions = node.setdefault("assetVersions", {})
         if kind == "asset.attach":
             receipt = {
                 key: payload[key]
                 for key in ("sha256", "sizeBytes", "mediaType")
             }
             _remember_asset_receipt(current, pages, asset_id, receipt)
+        versions = node.setdefault("assetVersions", {})
         if asset_id not in versions or rank > versions[asset_id]:
             assets = node.setdefault("assets", {})
             if kind == "asset.detach" or (
