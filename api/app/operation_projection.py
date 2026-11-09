@@ -6,11 +6,14 @@ reference only separately uploaded, verified and attached assets.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 import re
 from typing import Any
 
 from .operation_ordering import precedence
-from .operation_protocol import LIBRARY_DOCUMENT_ID, OperationEnvelope
+from .operation_protocol import (
+    LIBRARY_DOCUMENT_ID, MAX_SAFE_INTEGER, OperationEnvelope,
+)
 from .text_sequence import (
     TextSequenceError, apply_text_operation, render_delta,
 )
@@ -56,9 +59,16 @@ def _valid_rank(rank: object) -> bool:
         isinstance(rank, list)
         and len(rank) == 4
         and type(rank[0]) is int
-        and type(rank[1]) is str
+        and 1 <= rank[0] <= MAX_SAFE_INTEGER
+        and isinstance(rank[1], str)
+        and 1 <= len(rank[1]) <= 128
         and type(rank[2]) is int
-        and type(rank[3]) is str
+        and 1 <= rank[2] <= MAX_SAFE_INTEGER
+        and isinstance(rank[3], str)
+        and re.fullmatch(
+            r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}",
+            rank[3],
+        ) is not None
     )
 
 
@@ -239,7 +249,9 @@ def apply_operation(
             if kind != "folder.create" and not is_delete:
                 raise ProjectionError("Library has not been created.")
             current = {"folders": {}}
-        folders = current.setdefault("folders", {})
+        folders = current.get("folders", {})
+        if not isinstance(folders, dict):
+            raise ProjectionError("Corrupt persisted folders.")
         if kind == "folder.delete":
             for folder_id, child in folders.items():
                 if (folder_id != op.object_id and
@@ -254,16 +266,19 @@ def apply_operation(
             if is_create:
                 raise ProjectionError("Folder ID was deleted.")
             return current, None
-        node = folders.get(op.object_id)
+        existing = folders.get(op.object_id)
         if is_create:
-            if node is not None:
+            if existing is not None:
                 raise ProjectionError("Folder ID already used.")
-            node = _new_node()
-            folders[op.object_id] = node
-        if node is None:
-            raise ProjectionError("Folder has not been created.")
-        _merge(node, fields, op)
-        _validate_folder_graph(folders)
+            candidate = _new_node()
+        else:
+            if existing is None:
+                raise ProjectionError("Folder has not been created.")
+            candidate = deepcopy(existing)
+        _merge(candidate, fields, op)
+        # Validate the resulting graph before changing an existing node.
+        _validate_folder_graph({**folders, op.object_id: candidate})
+        current.setdefault("folders", folders)[op.object_id] = candidate
         return current, None
 
     if kind.startswith("task."):
@@ -273,7 +288,9 @@ def apply_operation(
             if kind != "task.create" and not is_delete:
                 raise ProjectionError("Library has not been created.")
             current = {"folders": {}, "tasks": {}}
-        tasks = current.setdefault("tasks", {})
+        tasks = current.get("tasks", {})
+        if not isinstance(tasks, dict):
+            raise ProjectionError("Corrupt persisted tasks.")
         if kind == "task.delete":
             tasks.pop(op.object_id, None)
             return current, task_key if task_key not in tombstones else None
@@ -281,14 +298,15 @@ def apply_operation(
             if is_create:
                 raise ProjectionError("Task ID was deleted.")
             return current, None
-        node = tasks.get(op.object_id)
+        existing = tasks.get(op.object_id)
         if is_create:
-            if node is not None:
+            if existing is not None:
                 raise ProjectionError("Task ID already used.")
-            node = _new_node()
-            tasks[op.object_id] = node
-        if node is None:
-            raise ProjectionError("Task has not been created.")
+            candidate = _new_node()
+        else:
+            if existing is None:
+                raise ProjectionError("Task has not been created.")
+            candidate = deepcopy(existing)
         if is_create and (
             not isinstance(fields.get("plannerUid"), str)
             or not fields["plannerUid"]
@@ -299,7 +317,8 @@ def apply_operation(
             or not fields["plannerUid"]
         ):
             raise ProjectionError("Invalid task plannerUid.")
-        _merge(node, fields, op)
+        _merge(candidate, fields, op)
+        current.setdefault("tasks", tasks)[op.object_id] = candidate
         return current, None
 
     if current is None:
@@ -324,10 +343,11 @@ def apply_operation(
                 raise ProjectionError("Page ID already used.")
             node = _new_node()
             node["objects"] = {}
-            pages[op.object_id] = node
         if node is None:
             raise ProjectionError("Page has not been created.")
         _merge(node, fields, op)
+        if is_create:
+            pages[op.object_id] = node
         return current, None
 
     # A moved object retains its globally unique ID. Historical page-scoped
@@ -412,19 +432,24 @@ def apply_operation(
                 raise ProjectionError("Causal move source is inconsistent.")
         if ("object", destination_id, op.object_id or "") in tombstones:
             raise ProjectionError("Destination identity was deleted.")
-        destination_objects = destination_page.setdefault("objects", {})
+        destination_objects = destination_page.get("objects", {})
+        if not isinstance(destination_objects, dict):
+            raise ProjectionError("Corrupt destination objects.")
         if (op.object_id in destination_objects
                 and actual_source != destination_id):
             raise ProjectionError("Destination identity is occupied.")
-        if actual_source != destination_id:
-            pages[actual_source]["objects"].pop(op.object_id)
-            destination_objects[op.object_id] = moved
-        _merge(moved, {"sortIndex": sort_index}, op)
-        moved["lastMove"] = {
+        candidate = deepcopy(moved)
+        _merge(candidate, {"sortIndex": sort_index}, op)
+        candidate["lastMove"] = {
             "rank": rank,
             "actorId": op.actor_id,
             "operationId": op.operation_id,
         }
+        if actual_source != destination_id:
+            pages[actual_source]["objects"].pop(op.object_id)
+        destination_page.setdefault("objects", destination_objects)[
+            op.object_id
+        ] = candidate
         return current, None
     node = objects.get(op.object_id)
     if is_create:
@@ -435,22 +460,30 @@ def apply_operation(
             raise ProjectionError("Object ID already used.")
         node = _new_node()
         node["type"] = kind
-        objects[op.object_id] = node
     if node is None:
         raise ProjectionError("Object has not been created.")
     if kind.startswith("asset."):
         asset_id = payload["assetId"]
         rank = list(precedence(op))
-        versions = _checked_versions(node, "assetVersions")
+        candidate = deepcopy(node)
+        versions = _checked_versions(candidate, "assetVersions")
+        staged_receipts = None
         if kind == "asset.attach":
             receipt = {
                 key: payload[key]
                 for key in ("sha256", "sizeBytes", "mediaType")
             }
-            _remember_asset_receipt(current, pages, asset_id, receipt)
-        node.setdefault("assetVersions", versions)
+            staged = dict(current)
+            staged["assetReceipts"] = deepcopy(
+                current.get("assetReceipts", {})
+            )
+            _remember_asset_receipt(staged, pages, asset_id, receipt)
+            staged_receipts = staged["assetReceipts"]
+        candidate.setdefault("assetVersions", versions)
         if asset_id not in versions or rank > versions[asset_id]:
-            assets = node.setdefault("assets", {})
+            assets = candidate.setdefault("assets", {})
+            if not isinstance(assets, dict):
+                raise ProjectionError("Corrupt persisted object assets.")
             if kind == "asset.detach" or (
                 kind == "asset.attach" and asset_id in assets
                 and assets[asset_id] != {
@@ -460,7 +493,7 @@ def apply_operation(
                 }
             ):
                 try:
-                    visible = render_delta(node.get("textAtoms", {}))
+                    visible = render_delta(candidate.get("textAtoms", {}))
                 except TextSequenceError as exc:
                     raise ProjectionError(str(exc)) from exc
                 if any(
@@ -472,7 +505,7 @@ def apply_operation(
                         "Cannot detach or replace an embedded asset."
                     )
             if kind == "asset.detach" and (
-                node.get("properties", {}).get("assetId") == asset_id
+                candidate.get("properties", {}).get("assetId") == asset_id
             ):
                 raise ProjectionError("Cannot detach the active image asset.")
             if kind == "asset.attach":
@@ -484,15 +517,20 @@ def apply_operation(
             else:
                 assets.pop(asset_id, None)
             versions[asset_id] = rank
+        objects[op.object_id] = candidate
+        if staged_receipts is not None:
+            current["assetReceipts"] = staged_receipts
         return current, None
     if kind.startswith("text."):
         if (node.get("type") != "object.create" or
                 node.get("properties", {}).get("objectType") != "text"):
             raise ProjectionError("Text operations require a text object.")
+        candidate = deepcopy(node)
         try:
-            apply_text_operation(node, op)
+            apply_text_operation(candidate, op)
         except TextSequenceError as exc:
             raise ProjectionError(str(exc)) from exc
+        objects[op.object_id] = candidate
         return current, None
     if "textAtoms" in node and ({"text", "delta"} & fields.keys()):
         raise ProjectionError("CRDT text cannot be replaced by object.set.")
@@ -507,6 +545,8 @@ def apply_operation(
                 "Image asset replacement needs a verified attachment."
             )
     _merge(node, fields, op)
+    if is_create:
+        objects[op.object_id] = node
     return current, None
 
 

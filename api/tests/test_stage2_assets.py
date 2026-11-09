@@ -137,7 +137,7 @@ def test_verified_attach_and_detach_and_z_order_converge():
         page="page", obj="image",
     )
     state, _ = apply_operation(state, detach, set())
-    assert node["assets"] == {}  # shared original node was mutated
+    assert node["assets"]["primary"]["sha256"] == DIGEST
     assert state["pages"]["page"]["objects"]["image"]["assets"] == {}
     state, _ = apply_operation(
         state, attach, set(), verified_assets=frozenset({DIGEST})
@@ -498,3 +498,82 @@ def test_corrupt_other_owner_does_not_create_receipt(corrupt):
         )
     assert state == before
     assert "assetReceipts" not in state
+
+
+
+def test_refused_detach_of_active_image_does_not_mutate_state():
+    state = seeded()
+    state, _ = apply_operation(
+        state, operation(
+            700, "asset.attach", attach_payload(), page="page", obj="image"
+        ), set(), verified_assets=frozenset({DIGEST}),
+    )
+    state, _ = apply_operation(
+        state, operation(
+            701, "object.set", {"properties": {"assetId": "primary"}},
+            page="page", obj="image",
+        ), set(),
+    )
+    before = deepcopy(state)
+    with pytest.raises(ProjectionError, match="active image"):
+        apply_operation(
+            state, operation(
+                702, "asset.detach", {"assetId": "primary"},
+                page="page", obj="image",
+            ), set(),
+        )
+    assert state == before
+
+
+def test_embedded_asset_detach_preserves_original_text_and_receipt():
+    state = seeded()
+    state, _ = apply_operation(
+        state, operation(
+            710, "object.create", {"value": {"objectType": "text"}},
+            page="page", obj="text",
+        ), set(),
+    )
+    state, _ = apply_operation(
+        state, operation(
+            711, "asset.attach", attach_payload(), page="page", obj="text",
+        ), set(), verified_assets=frozenset({DIGEST}),
+    )
+    state, _ = apply_operation(
+        state, operation(
+            712, "text.insert", {
+                "afterAtomId": None,
+                "atoms": [{
+                    "id": str(uuid.UUID(int=7110)),
+                    "text": "\ufffc",
+                    "embed": {"image": "asset:primary"},
+                }],
+            }, page="page", obj="text",
+        ), set(),
+    )
+    before = deepcopy(state)
+    with pytest.raises(ProjectionError, match="embedded asset"):
+        apply_operation(
+            state, operation(
+                713, "asset.detach", {"assetId": "primary"},
+                page="page", obj="text",
+            ), set(),
+        )
+    assert state == before
+
+
+def test_refused_wrong_receipt_does_not_change_shared_assets():
+    state = seeded()
+    state, _ = apply_operation(
+        state, operation(
+            720, "asset.attach", attach_payload(), page="page", obj="image",
+        ), set(), verified_assets=frozenset({DIGEST}),
+    )
+    before = deepcopy(state)
+    wrong = {**attach_payload(), "sha256": "f" * 64}
+    with pytest.raises(ProjectionError, match="already bound"):
+        apply_operation(
+            state, operation(
+                721, "asset.attach", wrong, page="page", obj="image",
+            ), set(), verified_assets=frozenset({"f" * 64}),
+        )
+    assert state == before

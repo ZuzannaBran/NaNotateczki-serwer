@@ -1,5 +1,34 @@
 # Stage 4 — PostgreSQL operation journal and API v2
 
+## Atomic projection candidates and validated ranks (2026-11-09)
+
+v2's Python reducer stages node updates before committing them to
+the JSON projection. Folder creation, reparenting and task changes
+validate the graph and planner UID before inserting a candidate.
+Object moves verify the destination and scalar precedence before
+relocation, while object.create cannot leave ghost IDs after
+failed asset validation.
+
+Asset attach/detach now clone the affected node, verify prior
+receipts against a staged document-wide receipt ledger and publish
+both together only on success. Text insert/delete/format stage the
+text block before applying CRDT operations. Invalid embeds,
+active-image detach, and malformed text must not mutate the
+previous projection in memory after raising ProjectionError.
+
+Persisted precedence also requires positive, JavaScript-safe
+logical clocks and actor sequences, nonempty actor IDs and a
+36-character UUID operation ID. Existing precedence tie-breaks
+remain unchanged. Corruption fails closed and does not migrate,
+repair or discard existing data.
+
+Regression tests cover folder cycles and orphan parents,
+planner identity and move violations, invalid object moves,
+ghost image creation, rejected detach and asset receipts,
+immutable prior node references, and invalid precedence bounds.
+The NaNotateczki/dev server mirror contains the same code
+and tests. v1 is unaffected; CI must confirm the new suite.
+
 ## Scalar and asset version integrity (2026-11-09)
 
 The PostgreSQL v2 reducer now validates every persisted field

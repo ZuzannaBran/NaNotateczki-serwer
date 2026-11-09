@@ -434,3 +434,200 @@ def test_corrupt_move_rank_does_not_relocate_objects(bad):
     with pytest.raises(ProjectionError, match="Corrupt persisted move"):
         apply_operation(state, second, deleted)
     assert state == before
+
+
+
+def test_failed_folder_cycle_keeps_original_graph_and_versions():
+    deleted = set()
+    state = apply(
+        None, op(500, "folder.create", doc="@library", target="root",
+                 props={"value": {"name": "Root", "parentId": None}}),
+        deleted,
+    )
+    state = apply(
+        state, op(501, "folder.create", doc="@library", target="child",
+                  props={"value": {"name": "Child", "parentId": "root"}}),
+        deleted,
+    )
+    before = deepcopy(state)
+    bad_move = op(
+        502, "folder.move", doc="@library", target="root",
+        props={"properties": {"parentId": "child"}},
+    )
+    with pytest.raises(ProjectionError, match="cycle"):
+        apply_operation(state, bad_move, deleted)
+    assert state == before
+    assert state["folders"]["root"]["properties"]["parentId"] is None
+    assert state["folders"]["root"]["versions"] == before[
+        "folders"
+    ]["root"]["versions"]
+
+    good_move = op(
+        503, "folder.move", doc="@library", target="child",
+        props={"properties": {"parentId": None}},
+    )
+    state, _ = apply_operation(state, good_move, deleted)
+    assert state["folders"]["child"]["properties"]["parentId"] is None
+
+
+def test_failed_folder_create_cannot_leave_ghost_or_parent_reference():
+    deleted = set()
+    state = apply(
+        None, op(510, "folder.create", doc="@library", target="root",
+                 props={"value": {"name": "Root", "parentId": None}}),
+        deleted,
+    )
+    before = deepcopy(state)
+    bad_create = op(
+        511, "folder.create", doc="@library", target="ghost",
+        props={"value": {"name": "Ghost", "parentId": "missing"}},
+    )
+    with pytest.raises(ProjectionError, match="does not exist"):
+        apply_operation(state, bad_create, deleted)
+    assert state == before
+    assert "ghost" not in state["folders"]
+
+
+@pytest.mark.parametrize("value", [
+    {"title": "Missing owner"}, {"plannerUid": ""},
+    {"plannerUid": 17}, {"plannerUid": None},
+])
+def test_invalid_task_create_has_no_partial_identity(value):
+    deleted = set()
+    state = apply(
+        None, op(520, "task.create", doc="@library", target="existing",
+                 props={"value": {"plannerUid": "p1"}}), deleted,
+    )
+    before = deepcopy(state)
+    bad_create = op(
+        521, "task.create", doc="@library", target="invalid",
+        props={"value": value},
+    )
+    with pytest.raises(ProjectionError, match="plannerUid"):
+        apply_operation(state, bad_create, deleted)
+    assert state == before
+    assert "invalid" not in state["tasks"]
+
+
+@pytest.mark.parametrize("value", ["", 0, None])
+def test_invalid_task_move_preserves_old_planner(value):
+    deleted = set()
+    state = apply(
+        None, op(530, "task.create", doc="@library", target="task",
+                 props={"value": {"plannerUid": "before"}}), deleted,
+    )
+    before = deepcopy(state)
+    invalid = op(
+        531, "task.move", doc="@library", target="task",
+        props={"properties": {"plannerUid": value}},
+    )
+    with pytest.raises(ProjectionError, match="plannerUid"):
+        apply_operation(state, invalid, deleted)
+    assert state == before
+
+
+@pytest.mark.parametrize("rank", [
+    [0, "actor", 1, "00000000-0000-4000-8000-000000000001"],
+    [-1, "actor", 1, "00000000-0000-4000-8000-000000000001"],
+    [9007199254740992, "actor", 1, "00000000-0000-4000-8000-000000000001"],
+    [1, "", 1, "00000000-0000-4000-8000-000000000001"],
+    [1, "actor", 0, "00000000-0000-4000-8000-000000000001"],
+    [1, "actor", 9007199254740992, "00000000-0000-4000-8000-000000000001"],
+    [1, "actor", 1, "not-a-uuid"],
+])
+def test_out_of_contract_scalar_ranks_fail_closed(rank):
+    state, deleted = seeded()
+    state["versions"]["created"] = rank
+    before = deepcopy(state)
+    with pytest.raises(ProjectionError, match="Corrupt persisted versions"):
+        apply_operation(
+            state, op(540, "document.set",
+                      props={"properties": {"title": "Late"}}),
+            deleted,
+        )
+    assert state == before
+
+
+def test_folder_and_task_existing_corrupt_versions_preserve_original():
+    deleted = set()
+    state = apply(
+        None, op(560, "folder.create", doc="@library", target="f",
+                 props={"value": {"parentId": None}}), deleted,
+    )
+    state = apply(
+        state, op(561, "task.create", doc="@library", target="t",
+                  props={"value": {"plannerUid": "p"}}), deleted,
+    )
+    state["folders"]["f"]["versions"]["bad"] = [0, "", 0, ""]
+    state["tasks"]["t"]["versions"]["bad"] = [0, "", 0, ""]
+    before = deepcopy(state)
+    with pytest.raises(ProjectionError, match="Corrupt persisted versions"):
+        apply_operation(
+            state, op(562, "folder.set", doc="@library", target="f",
+                      props={"properties": {"name": "Updated"}}), deleted,
+        )
+    assert state == before
+    with pytest.raises(ProjectionError, match="Corrupt persisted versions"):
+        apply_operation(
+            state, op(563, "task.set", doc="@library", target="t",
+                      props={"properties": {"completed": True}}), deleted,
+        )
+    assert state == before
+
+
+
+def test_failed_move_with_corrupt_scalar_versions_keeps_old_location():
+    state, deleted = seeded()
+    state = apply(state, op(600, "page.create", target="destination"), deleted)
+    state = apply(
+        state, op(601, "object.create", page="p", target="ink",
+                  props={"value": {"objectType": "stroke", "sortIndex": 0}}),
+        deleted,
+    )
+    node = state["pages"]["p"]["objects"]["ink"]
+    node["versions"]["corrupt"] = [0, "", 0, ""]
+    before = deepcopy(state)
+    move = op(
+        602, "object.move", page="p", target="ink",
+        props={"toPageId": "destination", "sortIndex": 1},
+    )
+    with pytest.raises(ProjectionError, match="Corrupt persisted versions"):
+        apply_operation(state, move, deleted)
+    assert state == before
+    assert "ink" in state["pages"]["p"]["objects"]
+    assert "ink" not in state["pages"]["destination"]["objects"]
+
+
+def test_image_create_with_unattached_asset_leaves_no_ghost_object():
+    state, deleted = seeded()
+    before = deepcopy(state)
+    invalid = op(
+        610, "object.create", page="p", target="image-ghost",
+        props={"value": {
+            "objectType": "image", "assetId": "missing-attachment",
+        }},
+    )
+    with pytest.raises(ProjectionError, match="verified attachment"):
+        apply_operation(state, invalid, deleted)
+    assert state == before
+    assert "image-ghost" not in state["pages"]["p"]["objects"]
+
+
+def test_successful_folder_move_replaces_only_changed_node():
+    deleted = set()
+    state = apply(
+        None, op(620, "folder.create", doc="@library", target="root",
+                 props={"value": {"parentId": None}}), deleted,
+    )
+    state = apply(
+        state, op(621, "folder.create", doc="@library", target="child",
+                  props={"value": {"parentId": "root"}}), deleted,
+    )
+    old_node = state["folders"]["child"]
+    new_state, _ = apply_operation(
+        state, op(622, "folder.move", doc="@library", target="child",
+                  props={"properties": {"parentId": None}}),
+        deleted,
+    )
+    assert old_node["properties"]["parentId"] == "root"
+    assert new_state["folders"]["child"]["properties"]["parentId"] is None
