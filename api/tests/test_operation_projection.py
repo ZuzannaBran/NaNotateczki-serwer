@@ -720,12 +720,12 @@ def test_concurrent_same_object_scalar_converges_in_both_orders():
     )
     low = op(
         821, "object.set", page="p", target="stroke",
-        actor="device-b", clock=100,
+        actor="device-b", clock=900,
         props={"properties": {"width": 3.0}},
     )
     high = op(
         822, "object.set", page="p", target="stroke",
-        actor="device-z", clock=100,
+        actor="device-z", clock=900,
         props={"properties": {"width": 5.0}},
     )
     for order in permutations((low, high)):
@@ -738,6 +738,27 @@ def test_concurrent_same_object_scalar_converges_in_both_orders():
             high.logical_clock, high.actor_id, high.actor_seq,
             high.operation_id,
         ]
+
+
+def test_creation_rank_prevents_stale_object_scalar_overwrite():
+    seed, deleted = seeded()
+    seed = apply(
+        seed, op(840, "object.create", page="p", target="original",
+                 props={"value": {"colorValue": 7, "width": 2.0}}), deleted,
+    )
+    old_revision = deepcopy(seed)
+    stale = op(
+        841, "object.set", page="p", target="original",
+        actor="offline-old-device", clock=100,
+        props={"properties": {"width": 99.0}},
+    )
+    result = apply(seed, stale, deleted)
+    assert result == old_revision
+    node = result["pages"]["p"]["objects"]["original"]
+    assert node["properties"]["width"] == 2.0
+    assert node["versions"]["width"] == [
+        840, "device-a", 840, str(__import__("uuid").UUID(int=840)),
+    ]
 
 
 def test_concurrent_format_same_atom_same_attribute_is_ranked():
