@@ -268,9 +268,29 @@ def test_actor_clock_undo_includes_inverse_and_ignores_other_documents():
     assert B2 not in first.dependencies
 
 
-def test_actor_clock_does_not_advance_on_unsafe_dependency_limit():
+def test_actor_clock_preserves_300_independent_parents_across_restart():
     actor = OperationActorClock("local")
-    for index in range(257):
+    ids = []
+    for index in range(300):
+        operation_id = f"{index:08x}-1111-4111-8111-111111111111"
+        ids.append(operation_id)
+        actor.observe(op(operation_id, f"remote-{index}", 1, 2))
+    restored = OperationActorClock.from_checkpoint(actor.to_checkpoint())
+    operation = restored.next(
+        document_id="notebook", kind="object.set", page_id="page",
+        object_id="stroke", payload={"properties": {"x": 1}},
+    )
+    assert len(operation.dependencies) == 300
+    assert set(operation.dependencies) == set(ids)
+    assert OperationEnvelope.from_dict(operation.to_dict()) == operation
+    assert restored.actor_seq == 1
+
+
+def test_actor_clock_does_not_advance_on_dependency_byte_limit():
+    from app.operation_protocol import MAX_DEPENDENCY_BYTES
+
+    actor = OperationActorClock("local")
+    for index in range(MAX_DEPENDENCY_BYTES // 39 + 1):
         remote = op(
             f"{index:08x}-1111-4111-8111-111111111111",
             f"remote-{index}", 1, 2,
