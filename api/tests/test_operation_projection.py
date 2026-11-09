@@ -675,3 +675,141 @@ def test_independent_moves_converge_with_equal_destination_sort_index():
             )
             for item_id, node in objects.items()
         )
+
+
+
+def test_concurrent_same_field_metadata_converges_by_rank():
+    seed, deleted = seeded()
+    low = op(
+        810, "document.set", actor="device-a", clock=12,
+        props={"properties": {"title": "Offline"}},
+    )
+    high = op(
+        811, "document.set", actor="device-z", clock=13,
+        props={"properties": {"title": "Remote"}},
+    )
+    for order in permutations((low, high)):
+        state = deepcopy(seed)
+        for event in order:
+            state = apply(state, event, deleted)
+        assert state["properties"]["title"] == "Remote"
+        assert state["versions"]["title"] == [
+            high.logical_clock, high.actor_id, high.actor_seq,
+            high.operation_id,
+        ]
+    page_low = op(
+        812, "page.set", target="p", actor="device-a", clock=18,
+        props={"properties": {"isBookmarked": False}},
+    )
+    page_high = op(
+        813, "page.set", target="p", actor="device-z", clock=18,
+        props={"properties": {"isBookmarked": True}},
+    )
+    for order in permutations((page_low, page_high)):
+        state = deepcopy(seed)
+        for event in order:
+            state = apply(state, event, deleted)
+        assert state["pages"]["p"]["properties"]["isBookmarked"] is True
+
+
+def test_concurrent_same_object_scalar_converges_in_both_orders():
+    seed, deleted = seeded()
+    seed = apply(
+        seed, op(820, "object.create", page="p", target="stroke",
+                 props={"value": {"colorValue": 0, "width": 2.0}}), deleted,
+    )
+    low = op(
+        821, "object.set", page="p", target="stroke",
+        actor="device-b", clock=100,
+        props={"properties": {"width": 3.0}},
+    )
+    high = op(
+        822, "object.set", page="p", target="stroke",
+        actor="device-z", clock=100,
+        props={"properties": {"width": 5.0}},
+    )
+    for order in permutations((low, high)):
+        state = deepcopy(seed)
+        for event in order:
+            state = apply(state, event, deleted)
+        node = state["pages"]["p"]["objects"]["stroke"]
+        assert node["properties"] == {"colorValue": 0, "width": 5.0}
+        assert node["versions"]["width"] == [
+            high.logical_clock, high.actor_id, high.actor_seq,
+            high.operation_id,
+        ]
+
+
+def test_concurrent_format_same_atom_same_attribute_is_ranked():
+    original, deleted = seeded()
+    original = apply(
+        original, op(
+            830, "object.create", page="p", target="text",
+            props={"value": {"objectType": "text"}},
+        ), deleted,
+    )
+    atom_id = "00000000-0000-4000-8000-0000000008f1"
+    original = apply(
+        original, op(
+            831, "text.insert", page="p", target="text",
+            props={"afterAtomId": None, "atoms": [
+                {"id": atom_id, "text": "Hello"}
+            ]},
+        ), deleted,
+    )
+    low = op(
+        832, "text.format", page="p", target="text",
+        actor="device-a", clock=900,
+        props={"atomIds": [atom_id], "attributes": {"bold": True}},
+    )
+    high = op(
+        833, "text.format", page="p", target="text",
+        actor="device-z", clock=901,
+        props={"atomIds": [atom_id], "attributes": {"bold": None}},
+    )
+    for order in permutations((low, high)):
+        state = deepcopy(original)
+        for event in order:
+            state = apply(state, event, deleted)
+        atom = state["pages"]["p"]["objects"]["text"]["textAtoms"][atom_id]
+        assert "bold" not in atom["attributes"]
+        assert atom["attributeVersions"]["bold"] == [
+            high.logical_clock, high.actor_id, high.actor_seq,
+            high.operation_id,
+        ]
+
+
+
+def test_concurrent_stroke_point_register_converges_in_both_orders():
+    original, deleted = seeded()
+    original = apply(
+        original, op(
+            910, "stroke.create", page="p", target="stroke",
+            props={"value": {"points": [[1, 2, 0.5]], "width": 2.0}},
+        ), deleted,
+    )
+    low = op(
+        911, "object.transform", page="p", target="stroke",
+        actor="tablet-a", clock=1000,
+        props={"properties": {"points": [[10, 20, 0.5]]}},
+    )
+    high = op(
+        912, "object.transform", page="p", target="stroke",
+        actor="tablet-b", clock=1001,
+        props={"properties": {
+            "points": [[30, 40, 0.8], [31, 41, 0.9]],
+        }},
+    )
+    for order in permutations((low, high)):
+        state = deepcopy(original)
+        for event in order:
+            state = apply(state, event, deleted)
+        node = state["pages"]["p"]["objects"]["stroke"]
+        assert node["properties"]["points"] == [
+            [30, 40, 0.8], [31, 41, 0.9],
+        ]
+        assert node["properties"]["width"] == 2.0
+        assert node["versions"]["points"] == [
+            high.logical_clock, high.actor_id, high.actor_seq,
+            high.operation_id,
+        ]

@@ -1,5 +1,21 @@
 # Stage 4 — PostgreSQL operation journal and API v2
 
+## Concurrent same-field LWW and Quill attribute convergence (2026-11-09)
+
+The backend reducer already resolves scalar properties and text
+attributeVersions by (logicalClock, actorId, actorSeq, operationId).
+New convergence tests exercise both arrival orders for concurrent
+document/page title and bookmark fields, object.set width, whole
+stroke points from object.transform, and Quill text.format with
+an identical atom/attribute and a null removal. Each history
+must reach the same projection and the same winner rank.
+
+The matching Dart v2 opt-in conflict policy now permits only these
+verified register cases; media replacement, destructive changes,
+image multi-field transforms and moves touching the same edited UID
+remain blocked. The reducer does not rewrite old operations or
+convert legacy snapshots.
+
 ## Bounded feed cursors and independent move convergence (2026-11-09)
 
 The v2 operations feed rejects booleans, strings, negative cursors
