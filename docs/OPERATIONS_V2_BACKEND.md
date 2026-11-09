@@ -1,5 +1,25 @@
 # Stage 4 — PostgreSQL operation journal and API v2
 
+## Pre-commit ACK contract for v2 (2026-11-09)
+
+validate_batch_receipts now checks the complete response before
+committing PostgreSQL event writes: every operationId must occur
+once with a valid applied/duplicate status, a distinct positive
+cursor not exceeding 2^53-1, and monotonically increasing cursor
+assignments as actorSeq increases for each individual actor.
+Input order is preserved in the emitted acknowledgements.
+Different actors may be interleaved; no cursor is reused.
+
+A violation fails closed with HTTP 500 before session.commit.
+No unacknowledged or partial event batch may be committed as
+an apparently successful response. Regression tests in
+test_operation_stage4.py cover the good replay response and
+invalid cursor, status, identity, missing entry and actor ordering.
+This makes the server contract explicit for the updated
+client-side atomic SQLite ACK batch.
+
+Legacy sync and account migration are unchanged.
+
 ## Atomic projection candidates and validated ranks (2026-11-09)
 
 v2's Python reducer stages node updates before committing them to

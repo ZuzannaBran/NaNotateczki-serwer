@@ -10,7 +10,8 @@ from pydantic import ValidationError
 from app.operation_protocol import OperationEnvelope
 from app.routers.operations import (
     OperationBatch, Principal, apply_one, ensure_actor_binding,
-    ensure_projection_budget, list_operations, validate_target,
+    ensure_projection_budget, list_operations, validate_batch_receipts,
+    validate_target,
 )
 
 OP_ID = "11111111-1111-4111-8111-111111111111"
@@ -231,3 +232,85 @@ def test_projection_size_is_checked_before_any_database_write():
         ensure_projection_budget({"text": "é" * 30}, 50)
     assert error.value.status_code == 413
     assert error.value.detail == "Document is too large."
+
+
+
+def test_ack_batch_contract_preserves_request_order_and_actor_causality():
+    first = envelope()
+    second = envelope(seq=2, operation_id=PARENT_ID, dependencies=[OP_ID])
+    receipts = {
+        second.operation_id: {
+            "operationId": second.operation_id,
+            "cursor": 24,
+            "status": "applied",
+        },
+        first.operation_id: {
+            "operationId": first.operation_id,
+            "cursor": 23,
+            "status": "duplicate",
+        },
+    }
+    result = validate_batch_receipts([first, second], receipts)
+    assert [item["operationId"] for item in result] == [
+        first.operation_id, second.operation_id,
+    ]
+    assert [item["cursor"] for item in result] == [23, 24]
+
+
+@pytest.mark.parametrize("fault", [
+    "duplicate_cursor", "reversed_cursor", "unsafe_integer",
+    "wrong_operation", "invalid_status", "missing_entry", "bool_cursor",
+])
+def test_invalid_ack_batch_is_rejected_before_database_commit(fault):
+    first = envelope()
+    second = envelope(seq=2, operation_id=PARENT_ID, dependencies=[OP_ID])
+    receipts = {
+        first.operation_id: {
+            "operationId": first.operation_id,
+            "cursor": 23,
+            "status": "duplicate",
+        },
+        second.operation_id: {
+            "operationId": second.operation_id,
+            "cursor": 24,
+            "status": "applied",
+        },
+    }
+    if fault == "duplicate_cursor":
+        receipts[second.operation_id]["cursor"] = 23
+    elif fault == "reversed_cursor":
+        receipts[first.operation_id]["cursor"] = 25
+    elif fault == "unsafe_integer":
+        receipts[second.operation_id]["cursor"] = 9007199254740992
+    elif fault == "wrong_operation":
+        receipts[second.operation_id]["operationId"] = OP_ID
+    elif fault == "invalid_status":
+        receipts[second.operation_id]["status"] = "pending"
+    elif fault == "missing_entry":
+        del receipts[second.operation_id]
+    elif fault == "bool_cursor":
+        receipts[second.operation_id]["cursor"] = True
+    with pytest.raises(HTTPException) as error:
+        validate_batch_receipts([first, second], receipts)
+    assert error.value.status_code == 500
+
+
+def test_ack_batch_tracks_actor_cursor_order_independently():
+    first = envelope()
+    another = envelope(operation_id=PARENT_ID).to_dict()
+    another["actorId"] = "independent"
+    peer = OperationEnvelope.from_dict(another)
+    receipts = {
+        first.operation_id: {
+            "operationId": first.operation_id,
+            "cursor": 34,
+            "status": "applied",
+        },
+        peer.operation_id: {
+            "operationId": peer.operation_id,
+            "cursor": 33,
+            "status": "applied",
+        },
+    }
+    result = validate_batch_receipts([first, peer], receipts)
+    assert [item["cursor"] for item in result] == [34, 33]

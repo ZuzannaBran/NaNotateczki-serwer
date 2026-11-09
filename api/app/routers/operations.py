@@ -23,7 +23,8 @@ from ..asset_store import asset_path, valid_verified_file
 from ..operation_ordering import precedence
 from ..operation_projection import ProjectionError, apply_operation
 from ..operation_protocol import (
-    InvalidOperation, LIBRARY_DOCUMENT_ID, OperationEnvelope,
+    InvalidOperation, LIBRARY_DOCUMENT_ID, MAX_SAFE_INTEGER,
+    OperationEnvelope,
 )
 from ..realtime_hub import hub
 from ..security import decode_access_token_claims, token_digest
@@ -377,8 +378,8 @@ async def post_batch(
                 detail={"code": "CAUSAL_GAP",
                         "operationIds": sorted(pending)},
             )
+    ordered = validate_batch_receipts(operations, acknowledgements)
     await session.commit()
-    ordered = [acknowledgements[op.operation_id] for op in operations]
     cursor = max(item["cursor"] for item in ordered)
     if changed_docs:
         try:
@@ -400,6 +401,46 @@ async def post_batch(
         except Exception:
             log.exception("Operation notification failed after commit")
     return {"cursor": cursor, "acknowledgements": ordered}
+
+
+def validate_batch_receipts(
+    operations: list[OperationEnvelope], receipts: dict[str, dict],
+) -> list[dict]:
+    """Verify the whole ACK response before committing the journal."""
+    if len(receipts) != len(operations):
+        raise HTTPException(status_code=500, detail="Incomplete v2 receipts.")
+    ordered = []
+    used_cursors: set[int] = set()
+    by_actor: dict[str, list[tuple[int, int]]] = {}
+    for operation in operations:
+        ack = receipts.get(operation.operation_id)
+        if not isinstance(ack, dict):
+            raise HTTPException(status_code=500, detail="Missing v2 receipt.")
+        cursor = ack.get("cursor")
+        if (
+            ack.get("operationId") != operation.operation_id
+            or ack.get("status") not in ("applied", "duplicate")
+            or type(cursor) is not int
+            or not 0 < cursor <= MAX_SAFE_INTEGER
+            or cursor in used_cursors
+        ):
+            raise HTTPException(status_code=500, detail="Invalid v2 receipt.")
+        used_cursors.add(cursor)
+        by_actor.setdefault(operation.actor_id, []).append((
+            operation.actor_seq, cursor,
+        ))
+        ordered.append(ack)
+    for actor in by_actor.values():
+        actor.sort()
+        for index in range(1, len(actor)):
+            if (
+                actor[index][0] <= actor[index - 1][0]
+                or actor[index][1] <= actor[index - 1][1]
+            ):
+                raise HTTPException(
+                    status_code=500, detail="Non-monotonic actor v2 receipt.",
+                )
+    return ordered
 
 
 async def list_operations(
