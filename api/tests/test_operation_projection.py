@@ -4,7 +4,9 @@ from itertools import permutations
 
 import pytest
 
-from app.operation_projection import ProjectionError, apply_operation
+from app.operation_projection import (
+    ProjectionError, apply_operation, ordered_objects,
+)
 from app.operation_protocol import OperationEnvelope
 
 
@@ -631,3 +633,45 @@ def test_successful_folder_move_replaces_only_changed_node():
     )
     assert old_node["properties"]["parentId"] == "root"
     assert new_state["folders"]["child"]["properties"]["parentId"] is None
+
+
+
+def test_independent_moves_converge_with_equal_destination_sort_index():
+    original, deleted = seeded()
+    original = apply(
+        original, op(700, "page.create", target="destination"), deleted,
+    )
+    for n, identity in ((701, "ink-a"), (702, "ink-b")):
+        original = apply(
+            original, op(
+                n, "stroke.create", page="p", target=identity,
+                props={"value": {"sortIndex": 0}},
+            ), deleted,
+        )
+    first = op(
+        703, "object.move", page="p", target="ink-a",
+        actor="moving-a", clock=705,
+        props={"toPageId": "destination", "sortIndex": 0},
+    )
+    second = op(
+        704, "object.move", page="p", target="ink-b",
+        actor="moving-b", clock=705,
+        props={"toPageId": "destination", "sortIndex": 0},
+    )
+    for order in permutations((first, second)):
+        state = deepcopy(original)
+        for move in order:
+            state = apply(state, move, deleted)
+        assert state["pages"]["p"]["objects"] == {}
+        objects = state["pages"]["destination"]["objects"]
+        assert set(objects) == {"ink-a", "ink-b"}
+        assert [
+            item_id
+            for item_id, node in ordered_objects(state["pages"]["destination"])
+        ] == ["ink-a", "ink-b"]
+        assert all(
+            node["lastMove"]["actorId"] == (
+                "moving-a" if item_id == "ink-a" else "moving-b"
+            )
+            for item_id, node in objects.items()
+        )

@@ -446,6 +446,8 @@ def validate_batch_receipts(
 async def list_operations(
     principal: Principal, after: int, session: AsyncSession,
 ) -> dict:
+    if type(after) is not int or not 0 <= after <= MAX_SAFE_INTEGER:
+        raise HTTPException(status_code=422, detail="Invalid feed cursor.")
     query = select(DocumentOperation).where(
         DocumentOperation.owner_id == principal.owner_id,
         DocumentOperation.cursor > after,
@@ -479,7 +481,7 @@ async def list_operations(
 
 @router.get("/operations")
 async def get_operations(
-    after: int = Query(default=0, ge=0),
+    after: int = Query(default=0, ge=0, le=MAX_SAFE_INTEGER),
     authorization: str | None = Header(default=None),
     share_id: uuid.UUID | None = Header(default=None, alias="X-Share-Id"),
     session: AsyncSession = Depends(database_session),

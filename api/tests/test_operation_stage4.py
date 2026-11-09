@@ -314,3 +314,31 @@ def test_ack_batch_tracks_actor_cursor_order_independently():
     }
     result = validate_batch_receipts([first, peer], receipts)
     assert [item["cursor"] for item in result] == [34, 33]
+
+
+
+@pytest.mark.parametrize("cursor", [-1, 9007199254740992, True, "1"])
+def test_invalid_feed_cursor_is_refused_before_database_read(cursor):
+    class Session:
+        async def scalars(self, query):
+            raise AssertionError("Invalid cursor must never query the journal.")
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(list_operations(principal(), cursor, Session()))
+    assert error.value.status_code == 422
+    assert error.value.detail == "Invalid feed cursor."
+
+
+def test_safe_upper_feed_cursor_returns_empty_feed():
+    class Session:
+        async def scalars(self, query):
+            return SimpleNamespace(all=lambda: [])
+
+    result = asyncio.run(
+        list_operations(principal(), 9007199254740991, Session())
+    )
+    assert result == {
+        "cursor": 9007199254740991,
+        "hasMore": False,
+        "operations": [],
+    }

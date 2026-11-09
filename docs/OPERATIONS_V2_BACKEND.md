@@ -1,5 +1,20 @@
 # Stage 4 — PostgreSQL operation journal and API v2
 
+## Bounded feed cursors and independent move convergence (2026-11-09)
+
+The v2 operations feed rejects booleans, strings, negative cursors
+and values above the JavaScript-safe 2^53-1 boundary before any
+SQLAlchemy database query. The FastAPI GET parameter enforces the
+same upper bound. An empty feed at the maximum valid cursor returns
+the original frontier without inventing events.
+
+Projection regression tests now apply two independent object.move
+events to the same destination with the same sortIndex in both
+arrival orders. The z-order remains deterministic through UID,
+each object appears exactly once and its durable lastMove receipt
+belongs to the correct actor. Conflicting moves for one UID are
+still subject to the existing precedence and causal restrictions.
+
 ## Pre-commit ACK contract for v2 (2026-11-09)
 
 validate_batch_receipts now checks the complete response before
