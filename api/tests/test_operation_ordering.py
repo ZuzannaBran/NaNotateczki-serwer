@@ -407,3 +407,35 @@ def test_actor_clock_prunes_transitive_observed_frontier():
     )
     assert next_operation.dependencies == (previous,)
     assert next_operation.logical_clock == 261
+
+
+def test_shared_dart_python_lww_undo_and_tombstone_contract():
+    first = op(
+        A1, "A", 1, 10, payload={
+            "properties": {"colorValue": 17, "sortIndex": 3},
+        },
+    )
+    concurrent = op(
+        B1, "B", 1, 10, payload={
+            "properties": {"colorValue": 34, "sortIndex": 5},
+        },
+    )
+    inverse = op(
+        A2, "A", 2, 11, payload={
+            "properties": {"colorValue": 51},
+        }, deps=[A1],
+    )
+    removal = op(
+        B2, "B", 2, 12, kind="object.delete",
+        payload={}, deps=[B1],
+    )
+    for order in ((first, concurrent), (concurrent, first)):
+        projection = OperationPropertyRegister()
+        for change in (*order, inverse):
+            projection.apply(change)
+        assert projection.fields_for(first) == {
+            "colorValue": 51, "sortIndex": 5,
+        }
+        projection.apply(removal)
+        projection.apply(first)
+        assert projection.fields_for(first) is None
