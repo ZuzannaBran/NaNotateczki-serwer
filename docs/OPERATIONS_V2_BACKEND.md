@@ -1,5 +1,16 @@
 # Stage 4 — PostgreSQL operation journal and API v2
 
+## Korekta testów rang i spójność przenosin (2026-11-09)
+
+Test współbieżnych object.set używa create z logicalClock=10,
+zamiast create o clock=820 (który poprawnie blokował set o clock=100).
+Dodatkowy test dowodzi odrzucenia starego skalarnego zapisu,
+a drugi test dowodzi, że niżej rangowana object.move nie nadpisuje
+wyżej rangowanego sortIndex z object.reorder.
+Lustrzane testy aplikacji i backendu używają tych samych scenariuszy.
+Bez zmiany struktury danych ani produkcyjnego protokołu.
+
+
 ## Concurrent same-field LWW and Quill attribute convergence (2026-11-09)
 
 The backend reducer already resolves scalar properties and text

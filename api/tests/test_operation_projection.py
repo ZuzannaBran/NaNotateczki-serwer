@@ -761,6 +761,37 @@ def test_creation_rank_prevents_stale_object_scalar_overwrite():
     ]
 
 
+def test_ranked_object_reorder_survives_lower_rank_move():
+    seed, deleted = seeded()
+    seed = apply(
+        seed, op(825, "page.create", target="destination", clock=30,
+                 props={"value": {"title": "Destination"}}), deleted,
+    )
+    seed = apply(
+        seed, op(826, "stroke.create", page="p", target="stroke", clock=35,
+                 props={"value": {"sortIndex": 0}}), deleted,
+    )
+    for move_first in (False, True):
+        state = deepcopy(seed)
+        move = op(
+            828, "object.move", page="p", target="stroke",
+            actor="move-actor", clock=50,
+            props={"toPageId": "destination", "sortIndex": 2},
+        )
+        reorder = op(
+            827, "object.reorder",
+            page="destination" if move_first else "p",
+            target="stroke", actor="reorder-actor", clock=60,
+            props={"properties": {"sortIndex": 9}},
+        )
+        for event in ((move, reorder) if move_first else (reorder, move)):
+            state = apply(state, event, deleted)
+        node = state["pages"]["destination"]["objects"]["stroke"]
+        assert node["properties"]["sortIndex"] == 9
+        assert node["versions"]["sortIndex"][0] == 60
+        assert "stroke" not in state["pages"]["p"]["objects"]
+
+
 def test_concurrent_format_same_atom_same_attribute_is_ranked():
     original, deleted = seeded()
     original = apply(
