@@ -188,13 +188,29 @@ async def apply_one(
                 status_code=409, detail="Actor crossed document scope."
             )
 
-    for dependency in op.dependencies:
-        parent = await session.scalar(
+    # Large causal frontiers must not issue one SQL round-trip per parent.
+    # The same session sees operations flushed earlier in this transaction.
+    parent_lookup = None
+    if len(op.dependencies) > 1:
+        parents = await session.scalars(
             select(DocumentOperation).where(
                 DocumentOperation.owner_id == owner_id,
-                DocumentOperation.operation_id == uuid.UUID(dependency),
+                DocumentOperation.operation_id.in_(
+                    [uuid.UUID(item) for item in op.dependencies]
+                ),
             )
         )
+        parent_lookup = {str(item.operation_id): item for item in parents}
+    for dependency in op.dependencies:
+        if parent_lookup is None:
+            parent = await session.scalar(
+                select(DocumentOperation).where(
+                    DocumentOperation.owner_id == owner_id,
+                    DocumentOperation.operation_id == uuid.UUID(dependency),
+                )
+            )
+        else:
+            parent = parent_lookup.get(dependency)
         if parent is None:
             return None
         if parent.document_uid != op.document_id:
