@@ -98,6 +98,69 @@ def test_missing_dependency_is_not_committed():
     assert session.writes == []
 
 
+def test_300_dependency_frontier_uses_one_query_and_keeps_missing_gap():
+    owner = principal()
+    dependencies = [
+        f"{index:08x}-1111-4111-8111-111111111111"
+        for index in range(300)
+    ]
+
+    class Session(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.parent_queries = 0
+
+        async def scalars(self, statement):
+            self.parent_queries += 1
+            return [
+                SimpleNamespace(
+                    operation_id=uuid.UUID(parent),
+                    document_uid="doc",
+                    logical_clock=0,
+                )
+                for parent in dependencies[:-1]
+            ]
+
+    session = Session()
+    operation = envelope(dependencies=dependencies)
+    assert asyncio.run(apply_one(session, owner, operation)) is None
+    assert session.parent_queries == 1
+    assert session.writes == []
+
+
+def test_bulk_dependency_lookup_rejects_cross_document_parent():
+    owner = principal()
+    dependencies = [
+        f"{index:08x}-1111-4111-8111-111111111111"
+        for index in range(300)
+    ]
+
+    class Session(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.parent_queries = 0
+
+        async def scalars(self, statement):
+            self.parent_queries += 1
+            return [
+                SimpleNamespace(
+                    operation_id=uuid.UUID(parent),
+                    document_uid="foreign" if index == 299 else "doc",
+                    logical_clock=0,
+                )
+                for index, parent in enumerate(dependencies)
+            ]
+
+    session = Session()
+    operation = envelope(dependencies=dependencies)
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(apply_one(session, owner, operation))
+    assert error.value.status_code == 422
+    assert error.value.detail == "Cross-document causal dependency."
+    assert session.parent_queries == 1
+    assert session.writes == []
+
+
 def test_checkpoint_prevents_sequence_fork():
     owner = principal()
     checkpoint = SimpleNamespace(
