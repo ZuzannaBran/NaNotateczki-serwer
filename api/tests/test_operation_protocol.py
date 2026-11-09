@@ -90,3 +90,24 @@ def test_undo_is_new_operation_not_rewritten_history():
         revertsOperationId=FIRST,
     )
     assert OperationEnvelope.from_dict(undo).reverts_operation_id == FIRST
+
+
+def test_causal_dependencies_above_old_256_limit_roundtrip():
+    dependencies = [
+        f"{index:08x}-1111-4111-8111-111111111111"
+        for index in range(300)
+    ]
+    op = OperationEnvelope.from_dict(sample(dependencies=dependencies))
+    assert list(op.dependencies) == dependencies
+    assert OperationEnvelope.from_dict(op.to_dict()) == op
+
+
+def test_oversized_dependencies_fail_closed_without_truncation():
+    from app.operation_protocol import MAX_DEPENDENCY_BYTES
+
+    dependencies = [
+        f"{index:08x}-1111-4111-8111-111111111111"
+        for index in range(MAX_DEPENDENCY_BYTES // 39 + 1)
+    ]
+    with pytest.raises(InvalidOperation, match="causal dependencies"):
+        OperationEnvelope.from_dict(sample(dependencies=dependencies))
