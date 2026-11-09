@@ -8,7 +8,9 @@ from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
-from .operation_protocol import MAX_SAFE_INTEGER, OperationEnvelope
+from .operation_protocol import (
+    MAX_DEPENDENCY_BYTES, MAX_SAFE_INTEGER, OperationEnvelope,
+)
 
 
 class OperationOrderError(ValueError):
@@ -89,7 +91,7 @@ class OperationActorClock:
             *([self.previous_operation_id] if self.previous_operation_id else []),
         })
         if (
-            len(causal_ids) > 256
+            len(causal_ids) * 39 > MAX_DEPENDENCY_BYTES
             or self.actor_seq >= MAX_SAFE_INTEGER
             or self.logical_clock >= MAX_SAFE_INTEGER
         ):
