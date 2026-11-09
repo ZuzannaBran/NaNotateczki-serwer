@@ -11,6 +11,7 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 MAX_SAFE_INTEGER = 9007199254740991
+MAX_DEPENDENCY_BYTES = 128 * 1024
 LIBRARY_DOCUMENT_ID = "@library"
 _INVALID_ID_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 _UUID = re.compile(
@@ -164,7 +165,7 @@ class OperationEnvelope:
                 "Invalid actor, document, sequence or clock."
             )
         if (
-            len(self.dependencies) > 256
+            len(self.dependencies) * 39 > MAX_DEPENDENCY_BYTES
             or len(set(self.dependencies)) != len(self.dependencies)
             or self.operation_id in self.dependencies
             or any(not _UUID.fullmatch(item) for item in self.dependencies)
