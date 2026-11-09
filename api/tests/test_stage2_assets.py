@@ -472,3 +472,29 @@ def test_quill_inverse_reuses_verified_asset_without_reviving_deleted_ids(
         assert page not in state["pages"]
         with pytest.raises(ProjectionError, match="deleted"):
             commit(operation(15, "page.create", {"value": {}}, obj="page"))
+
+
+
+@pytest.mark.parametrize("corrupt", [
+    {"assetVersions": {"other": [1, "actor", True, "operation"]}},
+    {"assetVersions": ["invalid"]},
+    {"assets": ["not-a-map"]},
+])
+def test_corrupt_other_owner_does_not_create_receipt(corrupt):
+    state = seeded()
+    state, _ = apply_operation(
+        state, operation(
+            4, "object.create", {"value": {"objectType": "text"}},
+            page="page", obj="other",
+        ), set(),
+    )
+    state["pages"]["page"]["objects"]["other"].update(corrupt)
+    before = deepcopy(state)
+    with pytest.raises(ProjectionError, match="Corrupt persisted"):
+        apply_operation(
+            state, operation(
+                5, "asset.attach", attach_payload(), page="page", obj="image",
+            ), set(), verified_assets=frozenset({DIGEST}),
+        )
+    assert state == before
+    assert "assetReceipts" not in state

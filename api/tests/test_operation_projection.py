@@ -353,3 +353,84 @@ def test_object_uid_cannot_be_created_twice_across_pages():
     with pytest.raises(ProjectionError, match="already used"):
         apply(state, op(5, "stroke.create", page="other", target="uid"),
               deleted)
+
+
+
+@pytest.mark.parametrize("target", ["document", "page", "object"])
+@pytest.mark.parametrize("rank", [
+    [], [1, "actor", 2], [1, "actor", True, "op"],
+    ["1", "actor", 2, "op"], [1, "actor", 2, []],
+])
+def test_corrupt_scalar_version_never_silently_repairs(target, rank):
+    state, deleted = seeded()
+    if target == "object":
+        state = apply(
+            state, op(3, "object.create", page="p", target="a"), deleted,
+        )
+        node = state["pages"]["p"]["objects"]["a"]
+        change = op(4, "object.set", page="p", target="a",
+                    props={"properties": {"fresh": True}})
+    elif target == "page":
+        node = state["pages"]["p"]
+        change = op(4, "page.set", target="p",
+                    props={"properties": {"title": "New"}})
+    else:
+        node = state
+        change = op(4, "document.set",
+                    props={"properties": {"title": "New"}})
+    node["versions"]["unrelated"] = rank
+    before = deepcopy(state)
+    with pytest.raises(ProjectionError, match="Corrupt persisted versions"):
+        apply_operation(state, change, deleted)
+    assert state == before
+
+
+@pytest.mark.parametrize("bad", [
+    [], {"good": [1, "actor", False, "op"]},
+    {"bad": [1, "actor", 2, None]},
+])
+def test_asset_version_corruption_never_overwrites_receipts(bad):
+    state, deleted = seeded()
+    state = apply(
+        state, op(3, "object.create", page="p", target="image",
+                  props={"value": {"objectType": "image"}}), deleted,
+    )
+    node = state["pages"]["p"]["objects"]["image"]
+    node["assetVersions"] = bad
+    before = deepcopy(state)
+    asset = op(
+        4, "asset.attach", page="p", target="image",
+        props={"assetId": "asset-a", "sha256": "a" * 64,
+               "sizeBytes": 12, "mediaType": "image/png"},
+    )
+    with pytest.raises(
+        ProjectionError, match="Corrupt persisted assetVersions"
+    ):
+        apply_operation(state, asset, deleted,
+                        verified_assets=frozenset({"a" * 64}))
+    assert state == before
+
+
+@pytest.mark.parametrize("bad", [
+    [], [1, "actor", 2], [1, "actor", True, "op"],
+])
+def test_corrupt_move_rank_does_not_relocate_objects(bad):
+    state, deleted = seeded()
+    state = apply(state, op(3, "page.create", target="second"), deleted)
+    state = apply(
+        state, op(4, "object.create", page="p", target="a"), deleted,
+    )
+    first = op(
+        5, "object.move", page="p", target="a",
+        props={"toPageId": "second", "sortIndex": 0},
+    )
+    state = apply(state, first, deleted)
+    state["pages"]["second"]["objects"]["a"]["lastMove"]["rank"] = bad
+    before = deepcopy(state)
+    second = op(
+        6, "object.move", page="second", target="a",
+        props={"toPageId": "p", "sortIndex": 1},
+    )
+    with pytest.raises(ProjectionError, match="Corrupt persisted move"):
+        apply_operation(state, second, deleted)
+    assert state == before

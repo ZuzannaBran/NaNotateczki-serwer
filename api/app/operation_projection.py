@@ -51,10 +51,38 @@ def _new_node() -> dict[str, Any]:
     return {"properties": {}, "versions": {}}
 
 
+def _valid_rank(rank: object) -> bool:
+    return (
+        isinstance(rank, list)
+        and len(rank) == 4
+        and type(rank[0]) is int
+        and type(rank[1]) is str
+        and type(rank[2]) is int
+        and type(rank[3]) is str
+    )
+
+
+def _checked_versions(node: dict, name: str) -> dict:
+    versions = node.get(name, {})
+    if (
+        not isinstance(versions, dict)
+        or any(
+            not isinstance(key, str) or not _valid_rank(rank)
+            for key, rank in versions.items()
+        )
+    ):
+        raise ProjectionError(f"Corrupt persisted {name} precedence.")
+    return versions
+
+
 def _merge(node: dict, fields: Mapping, op: OperationEnvelope) -> None:
     rank = list(precedence(op))
-    versions = node.setdefault("versions", {})
-    properties = node.setdefault("properties", {})
+    versions = _checked_versions(node, "versions")
+    properties = node.get("properties", {})
+    if not isinstance(properties, dict):
+        raise ProjectionError("Corrupt persisted properties.")
+    node.setdefault("versions", versions)
+    node.setdefault("properties", properties)
     for key, value in fields.items():
         old = versions.get(key)
         if old is None or rank > old:
@@ -103,11 +131,22 @@ def _remember_asset_receipt(
     # Earlier snapshots lack the receipt ledger. Existing attachments
     # can establish their identity, but detached old IDs cannot be trusted.
     for page in pages.values():
-        for node in page.get("objects", {}).values():
-            previous = node.get("assets", {}).get(asset_id)
+        if not isinstance(page, dict):
+            raise ProjectionError("Corrupt persisted page.")
+        objects = page.get("objects", {})
+        if not isinstance(objects, dict):
+            raise ProjectionError("Corrupt persisted objects.")
+        for node in objects.values():
+            if not isinstance(node, dict):
+                raise ProjectionError("Corrupt persisted object.")
+            versions = _checked_versions(node, "assetVersions")
+            assets = node.get("assets", {})
+            if not isinstance(assets, dict):
+                raise ProjectionError("Corrupt persisted object assets.")
+            previous = assets.get(asset_id)
             if previous is not None and previous != receipt:
                 raise ProjectionError("Asset ID was already bound to other bytes.")
-            if previous is None and asset_id in node.get("assetVersions", {}):
+            if previous is None and asset_id in versions:
                 raise ProjectionError("Asset ID has no durable receipt.")
     current.setdefault("assetReceipts", {})[asset_id] = dict(receipt)
 
@@ -348,9 +387,13 @@ def apply_operation(
         previous = moved.get("lastMove")
         rank = list(precedence(op))
         if previous is not None:
-            if not isinstance(previous, dict) or set(previous) != {
-                "rank", "actorId", "operationId"
-            }:
+            if (
+                not isinstance(previous, dict)
+                or set(previous) != {"rank", "actorId", "operationId"}
+                or not _valid_rank(previous["rank"])
+                or not isinstance(previous["actorId"], str)
+                or not isinstance(previous["operationId"], str)
+            ):
                 raise ProjectionError("Corrupt persisted move version.")
             if rank <= previous["rank"]:
                 # A losing operation must not resurrect a removed destination.
@@ -398,13 +441,14 @@ def apply_operation(
     if kind.startswith("asset."):
         asset_id = payload["assetId"]
         rank = list(precedence(op))
+        versions = _checked_versions(node, "assetVersions")
         if kind == "asset.attach":
             receipt = {
                 key: payload[key]
                 for key in ("sha256", "sizeBytes", "mediaType")
             }
             _remember_asset_receipt(current, pages, asset_id, receipt)
-        versions = node.setdefault("assetVersions", {})
+        node.setdefault("assetVersions", versions)
         if asset_id not in versions or rank > versions[asset_id]:
             assets = node.setdefault("assets", {})
             if kind == "asset.detach" or (

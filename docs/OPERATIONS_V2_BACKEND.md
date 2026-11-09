@@ -1,5 +1,29 @@
 # Stage 4 — PostgreSQL operation journal and API v2
 
+## Scalar and asset version integrity (2026-11-09)
+
+The PostgreSQL v2 reducer now validates every persisted field
+precedence before applying scalar operations, not only the fields
+present in the incoming update. A valid rank is the four-element
+[logicalClock, actorId, actorSeq, operationId] list with strict
+int/string/int/string types (bool is not a clock or sequence).
+Malformed `versions`, `assetVersions` and `lastMove.rank`
+raise ProjectionError instead of silently overwriting corrupt
+history or throwing an unrelated TypeError. No partial scalar
+merge is made before validation.
+
+Asset receipt discovery also validates version maps and object
+asset structures on other owners before inserting a new receipt
+into the document ledger. Corruption in an unrelated attachment
+cannot be masked by a new successful asset.attach. These checks
+do not rewrite historical operations or relax checksum validation.
+
+The Python regression matrix includes corrupted versions on
+document/page/object scalar fields, corrupt asset version maps,
+invalid move ranks and an unrelated owner with bad receipts.
+The NaNotateczki/dev server mirror and tests use identical code.
+The new tests must pass CI; production migration remains disabled.
+
 ## Shared immutable asset receipts and rollback (2026-11-09)
 
 Two independent object owners can attach one asset ID when both
