@@ -62,24 +62,41 @@ def _embed_asset_id(value: object, text: object) -> str:
     return asset_id
 
 
+def _valid_rank(rank: object, *, length: int) -> bool:
+    return (
+        isinstance(rank, list)
+        and len(rank) == length
+        and all(type(rank[i]) is int for i in range(0, length, 2))
+        and all(isinstance(rank[i], str) for i in range(1, length, 2))
+    )
+
+
 def _visible_ids(atoms: dict[str, dict]) -> list[str]:
     children: dict[str | None, list[str]] = {}
     for atom_id, atom in atoms.items():
         if not _atom_id(atom_id) or not isinstance(atom, dict):
             raise TextSequenceError("Invalid text graph node.")
         parent = atom.get("after")
-        if parent is not None and parent not in atoms:
+        if parent is not None and (
+            not _atom_id(parent) or parent not in atoms
+        ):
             raise TextSequenceError("Dangling text atom anchor.")
         if parent == atom_id:
             raise TextSequenceError("Self-referential text atom.")
         rank = atom.get("order")
-        if not isinstance(rank, list) or len(rank) != 5:
+        if not _valid_rank(rank, length=5):
             raise TextSequenceError("Invalid atom rank.")
         if type(atom.get("deleted")) is not bool or not isinstance(
             atom.get("text"), str
         ):
             raise TextSequenceError("Invalid atom fields.")
         validate_attributes(atom.get("attributes", {}))
+        versions = atom.get("attributeVersions", {})
+        if not isinstance(versions, dict) or any(
+            not isinstance(key, str) or not _valid_rank(version, length=4)
+            for key, version in versions.items()
+        ):
+            raise TextSequenceError("Invalid text attribute precedence.")
         if "embed" in atom:
             _embed_asset_id(atom["embed"], atom["text"])
         elif "\ufffc" in atom["text"]:
@@ -233,7 +250,14 @@ def apply_text_operation(node: dict[str, Any], op: OperationEnvelope) -> None:
         for atom_id in ids:
             atom = dict(atoms[atom_id])
             attributes = dict(atom.get("attributes", {}))
-            versions = dict(atom.get("attributeVersions", {}))
+            stored_versions = atom.get("attributeVersions", {})
+            if not isinstance(stored_versions, dict) or any(
+                not isinstance(key, str)
+                or not _valid_rank(version, length=4)
+                for key, version in stored_versions.items()
+            ):
+                raise TextSequenceError("Invalid text attribute precedence.")
+            versions = dict(stored_versions)
             for key, value in changes.items():
                 if key not in versions or rank > versions[key]:
                     if value is None:

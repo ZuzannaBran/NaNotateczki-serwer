@@ -289,3 +289,55 @@ def test_asset_ids_reject_controls_and_empty_values(bad_id: str) -> None:
                 verified_assets=frozenset({"a" * 64}),
             )
         assert state == before
+@pytest.mark.parametrize("invalid_order", [
+    ["10", "alice", 1, A, 0],
+    [10, {}, 1, A, 0],
+    [10, "alice", True, A, 0],
+    [10, "alice", 1, A],
+])
+def test_corrupt_atom_order_is_rejected_before_sort(invalid_order) -> None:
+    atoms = {
+        A: {
+            "after": None, "text": "A", "deleted": False,
+            "order": invalid_order, "attributes": {},
+        },
+    }
+    with pytest.raises(TextSequenceError, match="rank"):
+        render_text(atoms)
+
+
+@pytest.mark.parametrize("invalid_after", [
+    [], {"unexpected": "anchor"}, 4,
+])
+def test_unhashable_anchor_is_rejected_as_corruption(invalid_after) -> None:
+    atoms = {
+        A: {
+            "after": invalid_after, "text": "A", "deleted": False,
+            "order": [10, "alice", 1, A, 0], "attributes": {},
+        },
+    }
+    with pytest.raises(TextSequenceError, match="anchor"):
+        render_text(atoms)
+
+
+@pytest.mark.parametrize("versions", [
+    "not-a-map",
+    {"bold": [10, {}, 1, A]},
+    {"bold": [10, "alice", 1]},
+    {"bold": [True, "alice", 1, A]},
+])
+def test_invalid_attribute_versions_fail_without_partial_format(versions) -> None:
+    state = initial_state()
+    insert = operation("text.insert", {
+        "afterAtomId": None,
+        "atoms": [{"id": A, "text": "A",
+                   "attributes": {"bold": True}}],
+    }, clock=10)
+    state, _ = apply_operation(state, insert, set())
+    node(state)["textAtoms"][A]["attributeVersions"] = versions
+    before = copy.deepcopy(state)
+    with pytest.raises(ProjectionError, match="attribute precedence"):
+        apply_operation(state, operation("text.format", {
+            "atomIds": [A], "attributes": {"bold": False},
+        }, clock=10), set())
+    assert state == before

@@ -1,5 +1,18 @@
 # Stage 4 — PostgreSQL operation journal and API v2
 
+## Quill CRDT integrity checks (2026-11-09)
+
+The Python reducer validates stored atom ranks, parent identifiers and
+all per-attribute precedence records before sorting or formatting.
+Malformed values, unhashable anchors and invalid rank types raise
+TextSequenceError instead of TypeError or silently repairing damaged
+historical data. Transactional projection and actor checkpoints retain
+their existing fail-closed behavior. The NaNotateczki/dev server mirror
+has the same code and regression tests.
+
+This change does not enable migration, v1 removal or production v2.
+The new code and regressions require a fresh CI result.
+
 ## Trwałe receipty assetów (2026-11-08)
 
 Materializowany stan v2 przechowuje `assetReceipts` dla całego dokumentu.
@@ -44,9 +57,9 @@ not modify any historical migration.
 - Each document/page/object/folder ID is tombstoned on delete. Stale edits
   can be committed as ignored no-ops, but they cannot recreate deleted IDs.
   Ordinary property writes resolve by stable Lamport/actor rank.
-- Concurrent rich-text atoms and asset attachments deliberately return 422
-  until stage 6/asset verification is implemented. They must not silently
-  pass through the scalar property reducer.
+- Rich-text atoms use a deterministic Quill RGA. Embedded media
+  require verified and attached asset receipts; malformed operations
+  fail closed instead of falling back to scalar property updates.
 
 ## API
 
