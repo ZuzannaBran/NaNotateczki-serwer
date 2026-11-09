@@ -341,3 +341,59 @@ def test_invalid_attribute_versions_fail_without_partial_format(versions) -> Non
             "atomIds": [A], "attributes": {"bold": False},
         }, clock=10), set())
     assert state == before
+
+
+def test_shared_dart_python_quill_convergence_contract():
+    from app.text_sequence import apply_text_operation, render_delta
+
+    def make(kind, payload, operation_id, actor, clock):
+        return OperationEnvelope.from_dict({
+            "schemaVersion": 1,
+            "operationId": operation_id,
+            "actorId": actor,
+            "actorSeq": 1,
+            "documentId": DOC,
+            "pageId": PAGE,
+            "objectId": OBJECT,
+            "type": kind,
+            "payload": payload,
+            "logicalClock": clock,
+            "dependencies": [],
+        })
+
+    insert = make(
+        "text.insert", {"afterAtomId": None,
+                        "atoms": [{"id": A, "text": "X"}]},
+        A, "origin", 10,
+    )
+    red = make(
+        "text.format",
+        {"atomIds": [A], "attributes": {"bold": True, "color": "red"}},
+        B, "alice", 11,
+    )
+    blue = make(
+        "text.format",
+        {"atomIds": [A], "attributes": {"color": "blue"}},
+        C, "zed", 11,
+    )
+    expected = [{"insert": "X",
+                 "attributes": {"bold": True, "color": "blue"}}]
+    for updates in ((red, blue), (blue, red)):
+        node_state = {"properties": {"text": ""}, "textAtoms": {}}
+        for change in (insert, *updates):
+            apply_text_operation(node_state, change)
+        assert render_delta(node_state["textAtoms"]) == expected
+
+    deleted = make(
+        "text.delete", {"atomIds": [A]}, B, "alice", 20,
+    )
+    appended = make(
+        "text.insert",
+        {"afterAtomId": A, "atoms": [{"id": C, "text": "B"}]},
+        C, "zed", 21,
+    )
+    node_state = {"properties": {"text": ""}, "textAtoms": {}}
+    for change in (insert, deleted, appended):
+        apply_text_operation(node_state, change)
+    assert render_delta(node_state["textAtoms"]) == [{"insert": "B"}]
+    assert node_state["textAtoms"][A]["deleted"] is True
