@@ -176,8 +176,11 @@ a durable ID-to-envelope lookup and a verified causal frontier.
 
 `OperationActorClock.observe()` remembers the latest accepted remote
 operation per actor. New local operations depend on those observed frontiers
-and on their immediate own predecessor. Exceeding 256 dependencies or the
-safe integer limit fails before incrementing the local counter. The actor's
+and on their immediate own predecessor. An operation may carry more than 256 independent parents; the full
+serialized UUID list must fit a 128 KiB causal dependency budget (39 bytes
+per ID, including JSON separators). The validator never drops parents.
+Exceeding that budget or the safe integer limit fails before incrementing
+the local counter. A compact persistent frontier remains future work. The actor's
 observed frontier must be checkpointed together with its sequence and clock.
 
 ## Checkpoints and rollout
