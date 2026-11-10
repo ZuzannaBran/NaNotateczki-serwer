@@ -240,3 +240,19 @@ emit `text.delete` for the embed, then `asset.detach`. Tombstoned text
 atoms remain available as causal anchors; they do not keep the visible
 attachment alive. These operations remain part of the v2 infrastructure:
 production EditorController and legacy Share still use v1 pending cutover.
+
+## Compact committed-prefix frontier (optional)
+
+An operation may include `causalCursor` (positive safe integer). It denotes
+all committed operations of the authenticated owner through that global
+operation-feed cursor. Explicit `dependencies` remain mandatory for any
+unacknowledged operations, later feed items and Undo references. The server
+checks the owner cursor exists, prevents clocks older than included document
+history, and verifies same-actor predecessor is either an explicit UUID or
+covered by this cursor. No server-side memory buffer or new SQL table is
+required. Legacy envelopes omit `causalCursor` and retain their semantics.
+
+Only a contiguous, durably applied feed checkpoint may be used to generate
+a compact cursor. A client must never treat a partial page, an ACK alone, or
+a received event after a feed gap as covered. Deploy the server before
+allowing clients to generate this optional field.

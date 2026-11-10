@@ -111,3 +111,16 @@ def test_oversized_dependencies_fail_closed_without_truncation():
     ]
     with pytest.raises(InvalidOperation, match="causal dependencies"):
         OperationEnvelope.from_dict(sample(dependencies=dependencies))
+
+
+def test_compact_cursor_roundtrip_and_invalid_values():
+    operation = OperationEnvelope.from_dict(sample(
+        causalCursor=123, dependencies=[SECOND],
+    ))
+    assert operation.causal_cursor == 123
+    assert operation.to_dict()["causalCursor"] == 123
+    assert OperationEnvelope.from_dict(operation.to_dict()) == operation
+    assert "causalCursor" not in OperationEnvelope.from_dict(sample()).to_dict()
+    for value in (0, -1, True, "123", 9007199254740992):
+        with pytest.raises(InvalidOperation, match="compact causal cursor"):
+            OperationEnvelope.from_dict(sample(causalCursor=value))

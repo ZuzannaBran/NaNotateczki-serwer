@@ -84,6 +84,7 @@ class OperationEnvelope:
     page_id: str | None = None
     reverts_operation_id: str | None = None
     schema_version: int = SCHEMA_VERSION
+    causal_cursor: int | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> OperationEnvelope:
@@ -119,6 +120,9 @@ class OperationEnvelope:
                     and not isinstance(raw[key], str)
                 ):
                     raise InvalidOperation(f"Invalid optional field: {key}")
+            causal_cursor = raw.get("causalCursor")
+            if causal_cursor is not None and type(causal_cursor) is not int:
+                raise InvalidOperation("Invalid compact causal cursor.")
             op = cls(
                 operation_id=raw["operationId"],
                 actor_id=raw["actorId"],
@@ -132,6 +136,7 @@ class OperationEnvelope:
                 page_id=raw.get("pageId"),
                 reverts_operation_id=raw.get("revertsOperationId"),
                 schema_version=version,
+                causal_cursor=causal_cursor,
             )
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             if isinstance(exc, InvalidOperation):
@@ -164,6 +169,11 @@ class OperationEnvelope:
             raise InvalidOperation(
                 "Invalid actor, document, sequence or clock."
             )
+        if self.causal_cursor is not None and (
+            type(self.causal_cursor) is not int
+            or not 1 <= self.causal_cursor <= MAX_SAFE_INTEGER
+        ):
+            raise InvalidOperation("Invalid compact causal cursor.")
         if (
             len(self.dependencies) * 39 > MAX_DEPENDENCY_BYTES
             or len(set(self.dependencies)) != len(self.dependencies)
@@ -220,6 +230,8 @@ class OperationEnvelope:
             "dependencies": list(self.dependencies),
             "logicalClock": self.logical_clock,
         }
+        if self.causal_cursor is not None:
+            result["causalCursor"] = self.causal_cursor
         if self.page_id is not None:
             result["pageId"] = self.page_id
         if self.object_id is not None:

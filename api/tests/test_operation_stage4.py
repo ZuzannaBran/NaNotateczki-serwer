@@ -405,3 +405,33 @@ def test_safe_upper_feed_cursor_returns_empty_feed():
         "hasMore": False,
         "operations": [],
     }
+
+
+def test_compact_cursor_does_not_bypass_missing_actor_predecessor():
+    owner = principal()
+    previous = uuid.UUID(PARENT_ID)
+    checkpoint = SimpleNamespace(
+        principal_kind="owner", principal_id=owner.owner_id, share_id=None,
+        last_seq=1, last_operation_id=previous, last_logical_clock=1,
+    )
+
+    class Session(FakeSession):
+        def __init__(self):
+            super().__init__(checkpoint=checkpoint)
+            self.calls = 0
+
+        async def scalar(self, statement):
+            self.calls += 1
+            return SimpleNamespace(
+                document_uid="doc", cursor=51, logical_clock=1,
+            )
+
+    session = Session()
+    operation = OperationEnvelope.from_dict({
+        **envelope(seq=2).to_dict(),
+        "dependencies": [], "causalCursor": 50,
+    })
+    with pytest.raises(HTTPException, match="") as error:
+        asyncio.run(apply_one(session, owner, operation))
+    assert error.value.status_code == 409
+    assert session.writes == []

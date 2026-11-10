@@ -169,11 +169,7 @@ async def apply_one(
         if op.actor_seq <= checkpoint.last_seq:
             raise HTTPException(status_code=409, detail="Actor sequence fork.")
         return None
-    if checkpoint is not None and (
-        checkpoint.last_operation_id not in [
-            uuid.UUID(item) for item in op.dependencies
-        ] or op.logical_clock <= checkpoint.last_logical_clock
-    ):
+    if checkpoint is not None and op.logical_clock <= checkpoint.last_logical_clock:
         raise HTTPException(status_code=409, detail="Invalid actor causality.")
 
     if checkpoint is not None:
@@ -187,6 +183,34 @@ async def apply_one(
             raise HTTPException(
                 status_code=409, detail="Actor crossed document scope."
             )
+        if (
+            str(checkpoint.last_operation_id) not in op.dependencies
+            and (
+                op.causal_cursor is None
+                or predecessor.cursor > op.causal_cursor
+            )
+        ):
+            raise HTTPException(status_code=409, detail="Invalid actor causality.")
+
+    if op.causal_cursor is not None:
+        # The compact token covers a committed account-wide prefix, not a
+        # guessed actor sequence or a truncated dependency list.
+        latest = await session.scalar(
+            select(func.max(DocumentOperation.cursor)).where(
+                DocumentOperation.owner_id == owner_id
+            )
+        )
+        if latest is None or op.causal_cursor > latest:
+            return None
+        maximum_clock = await session.scalar(
+            select(func.max(DocumentOperation.logical_clock)).where(
+                DocumentOperation.owner_id == owner_id,
+                DocumentOperation.document_uid == op.document_id,
+                DocumentOperation.cursor <= op.causal_cursor,
+            )
+        )
+        if maximum_clock is not None and op.logical_clock <= maximum_clock:
+            raise HTTPException(status_code=422, detail="Invalid compact clock.")
 
     # Large causal frontiers must not issue one SQL round-trip per parent.
     # The same session sees operations flushed earlier in this transaction.
