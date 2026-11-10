@@ -437,3 +437,30 @@ def test_compact_cursor_does_not_bypass_missing_actor_predecessor():
         asyncio.run(apply_one(session, owner, operation))
     assert error.value.status_code == 409
     assert session.writes == []
+
+
+def test_share_compact_cursor_cannot_claim_private_owner_history():
+    guest = Principal(
+        owner_id=uuid.uuid4(), kind="share",
+        principal_id=uuid.uuid4(), share_id=uuid.uuid4(),
+        document_uid="shared-doc",
+    )
+
+    class Session(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        async def scalar(self, statement):
+            self.calls += 1
+            # No duplicate, owner global max, share visible max.
+            return (None, 600, 400)[self.calls - 1]
+
+    operation = OperationEnvelope.from_dict({
+        **envelope(doc="shared-doc").to_dict(),
+        "causalCursor": 500,
+    })
+    session = Session()
+    assert asyncio.run(apply_one(session, guest, operation)) is None
+    assert session.calls == 3
+    assert session.writes == []
