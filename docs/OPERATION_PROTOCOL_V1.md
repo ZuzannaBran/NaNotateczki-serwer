@@ -256,3 +256,20 @@ Only a contiguous, durably applied feed checkpoint may be used to generate
 a compact cursor. A client must never treat a partial page, an ACK alone, or
 a received event after a feed gap as covered. Deploy the server before
 allowing clients to generate this optional field.
+
+
+### Compact prefix and filtered share streams
+
+`causalCursor` is an optional v2 field. Older envelopes without it retain
+their explicit UUID dependencies. The cursor must reference an existing
+committed server operation in the submitting principal's visible scope:
+the owner's account-wide history or the guest's shared-document history.
+A missing historical cursor is rejected; a future cursor may be retried.
+A guest cannot use a private owner-document cursor to claim coverage.
+
+The receiver may treat nonconsecutive cursor numbers as legitimate only
+when a complete ordered page was returned by the authenticated feed
+filtered to that receiver's visibility. A failed visible operation blocks
+advancement of the committed prefix. The cursor can never cover the
+incoming operation itself; unconfirmed local dependencies and explicit
+Undo/Redo `revertsOperationId` remain in `dependencies`.
