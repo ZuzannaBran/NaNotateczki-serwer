@@ -437,3 +437,31 @@ def test_compact_cursor_does_not_bypass_missing_actor_predecessor():
         asyncio.run(apply_one(session, owner, operation))
     assert error.value.status_code == 409
     assert session.writes == []
+
+
+def test_guest_compact_cursor_is_scoped_to_visible_document():
+    owner_id = uuid.uuid4()
+    guest = Principal(
+        owner_id=owner_id, kind="share", principal_id=uuid.uuid4(),
+        share_id=uuid.uuid4(), document_uid="doc",
+    )
+    operation = OperationEnvelope.from_dict({
+        **envelope().to_dict(), "causalCursor": 60,
+    })
+
+    class Session(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.queries = []
+
+        async def scalar(self, statement):
+            self.queries.append(str(statement))
+            if len(self.queries) == 2:
+                return 50
+            return None
+
+    session = Session()
+    assert asyncio.run(apply_one(session, guest, operation)) is None
+    assert "document_uid" in session.queries[1]
+    assert session.writes == []
+
