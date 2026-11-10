@@ -464,3 +464,58 @@ def test_share_compact_cursor_cannot_claim_private_owner_history():
     assert asyncio.run(apply_one(session, guest, operation)) is None
     assert session.calls == 3
     assert session.writes == []
+
+
+def test_compact_cursor_rejects_nonexistent_committed_number():
+    owner = principal()
+    operation = OperationEnvelope.from_dict({
+        **envelope().to_dict(), "causalCursor": 50,
+    })
+
+    class Session(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        async def scalar(self, statement):
+            self.calls += 1
+            # Duplicate check, global max, exact cursor lookup.
+            return (None, 90, None)[self.calls - 1]
+
+    session = Session()
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(apply_one(session, owner, operation))
+    assert error.value.status_code == 422
+    assert "Unknown compact causal cursor" in error.value.detail
+    assert session.calls == 3
+    assert session.writes == []
+
+
+def test_guest_compact_cursor_requires_exact_visible_document_position():
+    guest = Principal(
+        owner_id=uuid.uuid4(), kind="share",
+        principal_id=uuid.uuid4(), share_id=uuid.uuid4(),
+        document_uid="shared-doc",
+    )
+    operation = OperationEnvelope.from_dict({
+        **envelope(doc="shared-doc").to_dict(), "causalCursor": 50,
+    })
+
+    class Session(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        async def scalar(self, statement):
+            self.calls += 1
+            # A private owner cursor is below the latest visible cursor,
+            # but has no matching row in the shared-document scope.
+            return (None, 90, 80, None)[self.calls - 1]
+
+    session = Session()
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(apply_one(session, guest, operation))
+    assert error.value.status_code == 422
+    assert session.calls == 4
+    assert session.writes == []
+
