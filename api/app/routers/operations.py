@@ -202,6 +202,17 @@ async def apply_one(
         )
         if latest is None or op.causal_cursor > latest:
             return None
+        if principal.document_uid is not None:
+            # Share guests only observe their document's filtered stream.
+            # A private owner cursor cannot be claimed as guest coverage.
+            visible = await session.scalar(
+                select(func.max(DocumentOperation.cursor)).where(
+                    DocumentOperation.owner_id == owner_id,
+                    DocumentOperation.document_uid == principal.document_uid,
+                )
+            )
+            if visible is None or op.causal_cursor > visible:
+                return None
         maximum_clock = await session.scalar(
             select(func.max(DocumentOperation.logical_clock)).where(
                 DocumentOperation.owner_id == owner_id,
