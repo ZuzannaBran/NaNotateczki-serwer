@@ -269,3 +269,10 @@ Only a contiguous, durably applied feed checkpoint may be used to generate
 a compact cursor. A client must never treat a partial page, an ACK alone, or
 a received event after a feed gap as covered. Deploy the server before
 allowing clients to generate this optional field.
+
+
+A compact cursor must identify an exact persisted operation within the
+authorized owner history (or within the visible shared document for a guest).
+It is not sufficient that the number be below the largest server cursor:
+PostgreSQL sequences may have gaps. A missing historical cursor is rejected
+with HTTP 422; a cursor beyond the latest known position is retryable.
