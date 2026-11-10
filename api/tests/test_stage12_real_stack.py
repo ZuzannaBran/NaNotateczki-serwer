@@ -177,6 +177,137 @@ def feed(client, token):
         cursor = payload["cursor"]
 
 
+def test_300_independent_parents_commit_over_real_http_and_postgresql(client):
+    """A bounded full frontier is applied without dropping any parent ID."""
+    _, token = identity()
+    document = "frontier-" + uuid.uuid4().hex
+    creator = Actor(document, "frontier-create-" + uuid.uuid4().hex)
+    created = creator.next(
+        "document.create", payload={"value": {"title": "base"}},
+    )
+    submit(client, token, [created])
+
+    parents = []
+    for index in range(300):
+        actor = Actor(document, f"frontier-peer-{index}", clock=1)
+        parents.append(actor.next(
+            "document.set",
+            payload={"properties": {"title": f"peer-{index}"}},
+            after=[created["operationId"]],
+        ))
+    for index in range(0, len(parents), 50):
+        submitted = submit(client, token, parents[index:index + 50])
+        assert len(submitted["acknowledgements"]) == 50
+        assert all(
+            receipt["status"] == "applied"
+            for receipt in submitted["acknowledgements"]
+        )
+
+    merger = Actor(document, "frontier-merge", clock=2)
+    merged = merger.next(
+        "document.set", payload={"properties": {"title": "merged"}},
+        after=[entry["operationId"] for entry in parents],
+    )
+    assert len(merged["dependencies"]) == 300
+    received = submit(client, token, [merged])
+    assert received["acknowledgements"][0]["status"] == "applied"
+    state = snapshot(client, token, document)
+    assert state["revision"] == 302
+    assert state["state"]["properties"]["title"] == "merged"
+    before_cursor = state["cursor"]
+
+    replay = submit(client, token, [merged])
+    assert replay["acknowledgements"][0]["status"] == "duplicate"
+    assert snapshot(client, token, document)["revision"] == 302
+    assert snapshot(client, token, document)["cursor"] == before_cursor
+
+    compact = Actor(document, "frontier-cursor-" + uuid.uuid4().hex, clock=302)
+    compacted = compact.next(
+        "document.set", payload={"properties": {"title": "compacted"}},
+    )
+    compacted["causalCursor"] = before_cursor
+    assert compacted["dependencies"] == []
+    receipt = submit(client, token, [compacted])
+    assert receipt["acknowledgements"][0]["status"] == "applied"
+    assert snapshot(client, token, document)["revision"] == 303
+    assert snapshot(client, token, document)["state"]["properties"]["title"] == "compacted"
+
+
+def test_global_cursor_tracks_commit_order_of_competing_transactions():
+    """Real PostgreSQL serializes the v2 cursor before either commit."""
+    _require_disposable_database()
+    owner_id, _ = identity()
+
+    async def exercise():
+        engine = create_async_engine(
+            os.environ["NN_STAGE12_FIXTURE_DATABASE_URL"],
+        )
+        first_id, second_id = uuid.uuid4(), uuid.uuid4()
+        first = await engine.connect()
+        second = await engine.connect()
+        first_transaction = await first.begin()
+        second_transaction = await second.begin()
+
+        async def insert(connection, operation_id, actor_id):
+            await connection.execute(text(
+                "INSERT INTO document_operations "
+                "(owner_id, operation_id, actor_id, actor_seq, "
+                "document_uid, op_kind, logical_clock, envelope) "
+                "VALUES (:owner, :operation, :actor, 1, 'cursor-test', "
+                "'document.create', 1, CAST(:envelope AS jsonb))"
+            ), {
+                "owner": owner_id,
+                "operation": operation_id,
+                "actor": actor_id,
+                "envelope": '{"schemaVersion":1}',
+            })
+
+        try:
+            await first.execute(
+                text("SELECT pg_advisory_xact_lock(681246731)")
+            )
+            await insert(first, first_id, "cursor-first")
+            started = asyncio.Event()
+
+            async def competing_commit():
+                started.set()
+                await second.execute(
+                    text("SELECT pg_advisory_xact_lock(681246731)")
+                )
+                await insert(second, second_id, "cursor-second")
+                await second_transaction.commit()
+
+            competing = asyncio.create_task(competing_commit())
+            await started.wait()
+            await asyncio.sleep(0.05)
+            assert not competing.done(), "Second writer bypassed cursor lock"
+            await first_transaction.commit()
+            await asyncio.wait_for(competing, timeout=10)
+
+            async with engine.connect() as check:
+                records = (await check.execute(text(
+                    "SELECT operation_id, cursor "
+                    "FROM document_operations "
+                    "WHERE operation_id IN (:first, :second) "
+                    "ORDER BY cursor"
+                ), {"first": first_id, "second": second_id})).all()
+                assert len(records) == 2
+                assert [row.operation_id for row in records] == [
+                    first_id, second_id,
+                ]
+                assert records[0].cursor < records[1].cursor
+        finally:
+            if first_transaction.is_active:
+                await first_transaction.rollback()
+            if second_transaction.is_active:
+                await second_transaction.rollback()
+            await first.close()
+            await second.close()
+            await engine.dispose()
+
+    asyncio.run(exercise())
+
+
 def test_persistent_protocol_fence_rejects_cross_writers(client):
     _, v1_token = identity(v2=False)
     legacy_doc = "stage12-legacy-" + uuid.uuid4().hex

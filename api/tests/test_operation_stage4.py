@@ -422,6 +422,8 @@ def test_compact_cursor_does_not_bypass_missing_actor_predecessor():
 
         async def scalar(self, statement):
             self.calls += 1
+            if self.calls == 1:
+                return None
             return SimpleNamespace(
                 document_uid="doc", cursor=51, logical_clock=1,
             )
