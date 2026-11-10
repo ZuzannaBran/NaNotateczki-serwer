@@ -130,6 +130,19 @@ authenticate message uses shareId with the same ticket. These transport
 capabilities do not activate production Share until client reducers and
 the v1→v2 migration are ready.
 
+### Compact filtered frontier
+
+Compact `causalCursor` represents a durable prefix of the **authorized,
+filtered** operation feed, not a claim that every global cursor belongs to
+the shared document. REST pages mark a complete visible prefix after server
+authorization and validation; missing global sequence numbers are harmless
+only when they contain no visible operations. A failed visible operation
+blocks checkpoint advancement. Arbitrary/custom gateways must not assert
+coverage without guaranteeing this invariant. Share writers cannot claim a
+cursor beyond their shared document's latest operation. Remote actor
+receipts are namespaced by account/share checkpoint and actor ID in SQLite.
+Undo/Redo's `revertsOperationId` remains an explicit dependency.
+
 ## Causality and conflict policy
 
 1. Deduplicate by `operationId`. Same ID with changed content is rejected.
