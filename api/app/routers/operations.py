@@ -202,11 +202,21 @@ async def apply_one(
             cursor_scope.append(
                 DocumentOperation.document_uid == principal.document_uid
             )
-        latest = await session.scalar(
-            select(func.max(DocumentOperation.cursor)).where(*cursor_scope)
+        exact_cursor = await session.scalar(
+            select(DocumentOperation.cursor).where(
+                *cursor_scope,
+                DocumentOperation.cursor == op.causal_cursor,
+            )
         )
-        if latest is None or op.causal_cursor > latest:
-            return None
+        if exact_cursor is None:
+            latest = await session.scalar(
+                select(func.max(DocumentOperation.cursor)).where(*cursor_scope)
+            )
+            if latest is None or op.causal_cursor > latest:
+                return None
+            raise HTTPException(
+                status_code=422, detail="Unknown compact causal cursor."
+            )
         maximum_clock = await session.scalar(
             select(func.max(DocumentOperation.logical_clock)).where(
                 DocumentOperation.owner_id == owner_id,
