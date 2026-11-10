@@ -213,6 +213,21 @@ async def apply_one(
             )
             if visible is None or op.causal_cursor > visible:
                 return None
+        exact_cursor_conditions = [
+            DocumentOperation.owner_id == owner_id,
+            DocumentOperation.cursor == op.causal_cursor,
+        ]
+        if principal.document_uid is not None:
+            exact_cursor_conditions.append(
+                DocumentOperation.document_uid == principal.document_uid
+            )
+        exact_cursor = await session.scalar(
+            select(DocumentOperation.cursor).where(*exact_cursor_conditions)
+        )
+        if exact_cursor is None:
+            raise HTTPException(
+                status_code=422, detail="Unknown compact causal cursor."
+            )
         maximum_clock = await session.scalar(
             select(func.max(DocumentOperation.logical_clock)).where(
                 DocumentOperation.owner_id == owner_id,
