@@ -195,10 +195,15 @@ async def apply_one(
     if op.causal_cursor is not None:
         # The compact token covers a committed account-wide prefix, not a
         # guessed actor sequence or a truncated dependency list.
-        latest = await session.scalar(
-            select(func.max(DocumentOperation.cursor)).where(
-                DocumentOperation.owner_id == owner_id
+        cursor_scope = [DocumentOperation.owner_id == owner_id]
+        if principal.document_uid is not None:
+            # A guest can only claim a cursor present in the visible
+            # document feed, never one from a private owner document.
+            cursor_scope.append(
+                DocumentOperation.document_uid == principal.document_uid
             )
+        latest = await session.scalar(
+            select(func.max(DocumentOperation.cursor)).where(*cursor_scope)
         )
         if latest is None or op.causal_cursor > latest:
             return None
