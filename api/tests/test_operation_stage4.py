@@ -456,7 +456,7 @@ def test_guest_compact_cursor_is_scoped_to_visible_document():
 
         async def scalar(self, statement):
             self.queries.append(str(statement))
-            if len(self.queries) == 2:
+            if len(self.queries) == 3:
                 return 50
             return None
 
@@ -465,3 +465,50 @@ def test_guest_compact_cursor_is_scoped_to_visible_document():
     assert "document_uid" in session.queries[1]
     assert session.writes == []
 
+
+
+def test_missing_historical_compact_cursor_is_rejected():
+    owner = principal()
+    operation = OperationEnvelope.from_dict({
+        **envelope().to_dict(), "causalCursor": 60,
+    })
+
+    class Session(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        async def scalar(self, statement):
+            self.calls += 1
+            if self.calls == 3:
+                return 100
+            return None
+
+    session = Session()
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(apply_one(session, owner, operation))
+    assert error.value.status_code == 422
+    assert "Unknown compact causal cursor" in error.value.detail
+    assert session.writes == []
+
+
+def test_future_compact_cursor_is_retryable_without_writes():
+    owner = principal()
+    operation = OperationEnvelope.from_dict({
+        **envelope().to_dict(), "causalCursor": 101,
+    })
+
+    class Session(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        async def scalar(self, statement):
+            self.calls += 1
+            if self.calls == 3:
+                return 100
+            return None
+
+    session = Session()
+    assert asyncio.run(apply_one(session, owner, operation)) is None
+    assert session.writes == []
