@@ -102,6 +102,19 @@ def test_causal_dependencies_above_old_256_limit_roundtrip():
     assert OperationEnvelope.from_dict(op.to_dict()) == op
 
 
+
+
+def test_thousands_of_explicit_uuids_roundtrip_with_compact_cursor():
+    dependencies = [
+        f"{index:08x}-1111-4111-8111-111111111111"
+        for index in range(3000)
+    ]
+    op = OperationEnvelope.from_dict(sample(
+        dependencies=dependencies, causalCursor=42,
+    ))
+    assert list(op.dependencies) == dependencies
+    assert OperationEnvelope.from_dict(op.to_dict()) == op
+
 def test_oversized_dependencies_fail_closed_without_truncation():
     from app.operation_protocol import MAX_DEPENDENCY_BYTES
 
