@@ -465,9 +465,9 @@ def _share_for(owner, document):
     sql(
         "INSERT INTO study_shares "
         "(id, owner_id, document_uid, title, password_hash, "
-        "expires_at, revoked_at, revision) "
+        "expires_at, revoked_at, revision, edit_clock) "
         "VALUES (:id, :owner, :document, 'Stage 12', 'test-only', "
-        ":expiry, NULL, 0)",
+        ":expiry, NULL, 0, jsonb_build_object('_protocol', 'v2'))",
         id=share_id, owner=owner, document=document, expiry=expiry,
     )
     sql(
