@@ -1049,3 +1049,97 @@ def test_duplicate_retried_edit_is_noop_without_new_clock():
     assert clock == first_clock
     assert len(repeated["pages"][0]["inkStrokes"]) == 1
 
+
+
+def test_v2_share_creation_is_fenced_to_committed_document(
+    environment, monkeypatch,
+):
+    client, db, _, _ = environment
+
+    async def approved_v2(*args):
+        return None
+
+    monkeypatch.setattr(shares, "require_v2_protocol", approved_v2)
+    original_scalar = db.scalar
+    state = DocumentState(
+        owner_id=OWNER_ID,
+        document_uid=NOTE_UID,
+        revision=2,
+        content={
+            "properties": {
+                "kindIndex": 0,
+                "title": "Committed operational notebook",
+            },
+            "pages": {},
+        },
+        deleted_at=None,
+    )
+
+    async def v2_scalar(statement):
+        if statement.column_descriptions[0]["entity"] is DocumentState:
+            return state
+        return await original_scalar(statement)
+
+    monkeypatch.setattr(db, "scalar", v2_scalar)
+    path = "/v2/study-shares"
+    body = {
+        "documentUid": NOTE_UID, "title": "Spoofed",
+        "password": PASSWORD,
+    }
+    result = client.post(path, json=body)
+    assert result.status_code == 201, result.text
+    share_id = result.json()["id"]
+    share = db.shares[uuid.UUID(share_id)]
+    assert share.title == "Committed operational notebook"
+    assert share.edit_clock["_protocol"] == "v2"
+    assert join(client, share_id).json()["protocol"] == "v2"
+    assert join(client, share_id).json()["documentUid"] == NOTE_UID
+    assert client.post(path, json=body).status_code == 409
+    assert client.delete(f"/v1/study-shares/{share_id}").status_code == 204
+    assert share.revoked_at is not None
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("missing", 409),
+    ("deleted", 409),
+    ("planner", 422),
+    ("invalid_kind", 422),
+    ("invalid_properties", 409),
+])
+def test_v2_share_refuses_uncommitted_or_unsupported_document(
+    environment, monkeypatch, mode, expected,
+):
+    client, db, _, _ = environment
+
+    async def approved_v2(*args):
+        return None
+
+    monkeypatch.setattr(shares, "require_v2_protocol", approved_v2)
+    original_scalar = db.scalar
+    state = DocumentState(
+        owner_id=OWNER_ID,
+        document_uid=NOTE_UID,
+        revision=2,
+        content={"properties": {"kindIndex": 0, "title": "Safe"}},
+        deleted_at=None,
+    )
+    if mode == "deleted":
+        state.deleted_at = datetime.now(UTC)
+    elif mode == "planner":
+        state.content["properties"]["kindIndex"] = 2
+    elif mode == "invalid_kind":
+        state.content["properties"]["kindIndex"] = True
+    elif mode == "invalid_properties":
+        state.content["properties"] = []
+
+    async def v2_scalar(statement):
+        if statement.column_descriptions[0]["entity"] is DocumentState:
+            return None if mode == "missing" or state.deleted_at else state
+        return await original_scalar(statement)
+
+    monkeypatch.setattr(db, "scalar", v2_scalar)
+    result = client.post("/v2/study-shares", json={
+        "documentUid": NOTE_UID, "title": "Safe", "password": PASSWORD,
+    })
+    assert result.status_code == expected, result.text
+    assert db.shares == {}

@@ -16,9 +16,11 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_protocol import require_legacy_protocol
+from ..account_protocol import require_legacy_protocol, require_v2_protocol
 from ..database import database_session, session_factory
-from ..models import ChangeEvent, StudyShare, StudyShareGrant, SyncedNotebook, User
+from ..models import (
+    ChangeEvent, DocumentState, StudyShare, StudyShareGrant, SyncedNotebook, User,
+)
 from ..rate_limit import InMemoryRateLimiter
 from ..realtime_hub import hub
 from ..schemas import validate_notebook_payload
@@ -315,6 +317,66 @@ def guest_ticket(authorization: str | None = Header(default=None)) -> str:
     return authorization[7:]
 
 
+@router.post("/v2/study-shares", status_code=201)
+async def create_v2_share(
+    body: ShareCreate,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    """Share only a committed operational document on a fenced v2 account."""
+    await lock_owner_events(session, user.id)
+    await require_v2_protocol(session, user.id)
+    document = await session.scalar(
+        select(DocumentState).where(
+            DocumentState.owner_id == user.id,
+            DocumentState.document_uid == body.documentUid,
+            DocumentState.deleted_at.is_(None),
+        )
+    )
+    if document is None or not isinstance(document.content, dict):
+        raise HTTPException(
+            status_code=409,
+            detail="Commit the v2 document before sharing.",
+        )
+    properties = document.content.get("properties")
+    if not isinstance(properties, dict):
+        raise HTTPException(status_code=409, detail="Corrupt v2 document.")
+    kind = properties.get("kindIndex")
+    if type(kind) is not int or kind not in (0, 1):
+        raise HTTPException(
+            status_code=422, detail="Only notebooks and boards can be shared."
+        )
+    existing = await session.scalar(
+        select(StudyShare)
+        .where(
+            StudyShare.owner_id == user.id,
+            StudyShare.document_uid == body.documentUid,
+            StudyShare.revoked_at.is_(None),
+            StudyShare.expires_at > datetime.now(UTC),
+        )
+        .limit(1)
+        .with_for_update()
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This document already has an active sharing session.",
+        )
+    share = StudyShare(
+        id=uuid.uuid4(),
+        owner_id=user.id,
+        document_uid=body.documentUid,
+        title=str(properties.get("title") or body.title)[:200],
+        password_hash=hash_password(body.password),
+        revision=0,
+        edit_clock={"_protocol": "v2"},
+        expires_at=datetime.now(UTC) + timedelta(hours=4),
+    )
+    session.add(share)
+    await session.commit()
+    return {"id": str(share.id), "expiresAt": share.expires_at.isoformat()}
+
+
 @router.post("/v1/study-shares", status_code=201)
 async def create_share(
     body: ShareCreate,
@@ -389,6 +451,7 @@ async def active_shares(
     return {"sessions": [{
         "id": str(share.id), "documentUid": share.document_uid,
         "title": share.title, "expiresAt": share.expires_at.isoformat(),
+        "protocol": (share.edit_clock or {}).get("_protocol", "v1"),
     } for share in rows]}
 
 
@@ -521,6 +584,8 @@ async def join_share(
         "title": share.title,
         "revision": share.revision,
         "expiresAt": share.expires_at.isoformat(),
+        "documentUid": share.document_uid,
+        "protocol": (share.edit_clock or {}).get("_protocol", "v1"),
     }
 
 
