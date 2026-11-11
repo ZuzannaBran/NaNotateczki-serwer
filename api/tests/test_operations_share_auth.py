@@ -34,6 +34,7 @@ def _objects(*, grant_expired=False, share_expired=False, revoked=False):
         document_uid="document-1",
         expires_at=now + timedelta(hours=-1 if share_expired else 1),
         revoked_at=now if revoked else None,
+        edit_clock={"_protocol": "v2"},
     )
     grant = SimpleNamespace(
         id=uuid.uuid4(),
@@ -78,3 +79,13 @@ def test_live_share_ticket_grants_only_its_document():
     assert principal.share_id == share.id
     assert principal.document_uid == share.document_uid
     assert principal.principal_id == grant.id
+
+
+def test_legacy_share_ticket_never_authorizes_operational_writes():
+    share, grant = _objects()
+    share.edit_clock = {}
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(authorize(
+            _ShareSession(share, grant), "Bearer " + "s" * 40, share.id,
+        ))
+    assert error.value.status_code == 403

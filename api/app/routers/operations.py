@@ -78,6 +78,10 @@ async def authorize(
         if grant.expires_at <= datetime.now(UTC):
             raise HTTPException(status_code=410, detail="Share ticket expired.")
         ensure_active(share)
+        if (share.edit_clock or {}).get("_protocol") != "v2":
+            raise HTTPException(
+                status_code=403, detail="Legacy share cannot write v2 operations.",
+            )
         return Principal(
             share.owner_id, "share", grant.id, share.id, share.document_uid
         )
@@ -101,6 +105,10 @@ async def check_share_lock(session: AsyncSession, principal: Principal) -> None:
     if share is None:
         raise HTTPException(status_code=410, detail="Share was removed.")
     ensure_active(share)
+    if (share.edit_clock or {}).get("_protocol") != "v2":
+        raise HTTPException(
+            status_code=403, detail="Legacy share cannot write v2 operations.",
+        )
     grant = await session.get(StudyShareGrant, principal.principal_id)
     if (
         grant is None or grant.share_id != principal.share_id
