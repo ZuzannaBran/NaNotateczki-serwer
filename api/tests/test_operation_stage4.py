@@ -519,3 +519,28 @@ def test_guest_compact_cursor_requires_exact_visible_document_position():
     assert session.calls == 4
     assert session.writes == []
 
+
+
+def test_guest_actor_survives_ticket_rotation_only_within_its_share():
+    owner = uuid.uuid4()
+    share = uuid.uuid4()
+    checkpoint = SimpleNamespace(
+        principal_kind="share",
+        principal_id=uuid.uuid4(),
+        share_id=share,
+    )
+    rotated = Principal(
+        owner_id=owner, kind="share",
+        principal_id=uuid.uuid4(), share_id=share,
+        document_uid="shared-document",
+    )
+    ensure_actor_binding(checkpoint, rotated)
+    with pytest.raises(HTTPException) as error:
+        ensure_actor_binding(
+            checkpoint,
+            Principal(
+                owner_id=owner, kind="share", principal_id=uuid.uuid4(),
+                share_id=uuid.uuid4(), document_uid="another",
+            ),
+        )
+    assert error.value.status_code == 403

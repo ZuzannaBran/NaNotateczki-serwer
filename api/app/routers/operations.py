@@ -145,10 +145,18 @@ def ensure_projection_budget(projected: dict | None, maximum_bytes: int) -> None
 def ensure_actor_binding(
     checkpoint: ActorCheckpoint | None, principal: Principal,
 ) -> None:
-    if checkpoint is not None and (
+    if checkpoint is None:
+        return
+    if (
         checkpoint.principal_kind != principal.kind
-        or checkpoint.principal_id != principal.principal_id
         or checkpoint.share_id != principal.share_id
+    ):
+        raise HTTPException(status_code=403, detail="Actor identity is bound.")
+    # Rejoining a share rotates its short-lived grant but must not rotate the
+    # local actor or abandon unacknowledged edits. Scope the actor to the
+    # invitation, never to a different share or account.
+    if principal.kind != "share" and (
+        checkpoint.principal_id != principal.principal_id
     ):
         raise HTTPException(status_code=403, detail="Actor identity is bound.")
 
