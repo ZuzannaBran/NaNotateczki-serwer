@@ -1094,6 +1094,12 @@ def test_v2_share_creation_is_fenced_to_committed_document(
     assert share.edit_clock["_protocol"] == "v2"
     assert join(client, share_id).json()["protocol"] == "v2"
     assert join(client, share_id).json()["documentUid"] == NOTE_UID
+    ticket = join(client, share_id).json()["ticket"]
+    legacy_read = client.get(
+        f"/v1/study-shares/{share_id}/document",
+        headers={"Authorization": f"Bearer {ticket}"},
+    )
+    assert legacy_read.status_code == 409
     assert client.post(path, json=body).status_code == 409
     assert client.delete(f"/v1/study-shares/{share_id}").status_code == 204
     assert share.revoked_at is not None

@@ -482,6 +482,11 @@ async def read_shared_document(
     session: AsyncSession = Depends(database_session),
 ) -> dict:
     share = await guest_share(share_id, ticket, session)
+    if (share.edit_clock or {}).get("_protocol") == "v2":
+        raise HTTPException(
+            status_code=409,
+            detail="Operational share has no legacy document snapshot.",
+        )
     notebook = await session.scalar(
         select(SyncedNotebook).where(
             SyncedNotebook.owner_id == share.owner_id,
