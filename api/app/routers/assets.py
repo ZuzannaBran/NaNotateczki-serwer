@@ -5,12 +5,13 @@ import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..account_protocol import require_v2_protocol
 from ..asset_store import asset_path, store_upload, valid_verified_file
 from ..database import database_session
-from ..models import DocumentState, VerifiedAsset
+from ..models import DocumentOperation, DocumentState, VerifiedAsset
 from ..settings import get_settings
 from .operations import authorize, check_share_lock, require_operations_v2_write
 
@@ -62,6 +63,22 @@ async def upload_asset(
     return {"sha256": sha256, "sizeBytes": size, "mediaType": mime}
 
 
+def historical_share_asset_query(
+    owner_id: uuid.UUID, document_uid: str, sha256: str,
+):
+    """A scoped historical attachment, never a global asset lookup."""
+    return (
+        select(DocumentOperation.cursor)
+        .where(
+            DocumentOperation.owner_id == owner_id,
+            DocumentOperation.document_uid == document_uid,
+            DocumentOperation.op_kind == "asset.attach",
+            DocumentOperation.envelope["payload"]["sha256"].astext == sha256,
+        )
+        .limit(1)
+    )
+
+
 @router.get("/{sha256}")
 async def download_asset(
     sha256: str,
@@ -86,7 +103,19 @@ async def download_asset(
             for asset in node.get("assets", {}).values()
         )
         if not referenced:
-            raise HTTPException(status_code=403, detail="Share scope violation.")
+            # Guests replay the whole visible operation feed. A formerly
+            # attached asset is already disclosed by that feed even when
+            # later detached. Replay must not fail solely because the
+            # current materialized document no longer references it.
+            historical = await session.scalar(
+                historical_share_asset_query(
+                    principal.owner_id, principal.document_uid, sha256,
+                )
+            )
+            if historical is None:
+                raise HTTPException(
+                    status_code=403, detail="Share scope violation."
+                )
     path = asset_path(get_settings().data_path, principal.owner_id, sha256)
     if not valid_verified_file(path, sha256, record.size_bytes):
         raise HTTPException(status_code=503, detail="Asset bytes not durable.")
