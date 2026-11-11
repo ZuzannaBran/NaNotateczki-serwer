@@ -397,3 +397,29 @@ def test_shared_dart_python_quill_convergence_contract():
         apply_text_operation(node_state, change)
     assert render_delta(node_state["textAtoms"]) == [{"insert": "B"}]
     assert node_state["textAtoms"][A]["deleted"] is True
+
+def test_tombstone_and_concurrent_format_converge_both_orders():
+    initial = initial_state()
+    insertion = operation(
+        "text.insert", {"afterAtomId": None, "atoms": [{"id": A, "text": "A"}]},
+        actor="origin", clock=10,
+    )
+    original, _ = apply_operation(initial, insertion, set())
+    formatting = operation(
+        "text.format", {"atomIds": [A], "attributes": {"bold": True}},
+        actor="format", clock=30,
+    )
+    deletion = operation(
+        "text.delete", {"atomIds": [A]}, actor="delete", clock=31,
+    )
+    outcomes = []
+    for events in ((formatting, deletion), (deletion, formatting)):
+        state = copy.deepcopy(original)
+        for event in events:
+            state, _ = apply_operation(state, event, set())
+        outcomes.append(state["pages"][PAGE]["objects"][OBJECT]["textAtoms"])
+        assert state["pages"][PAGE]["objects"][OBJECT]["properties"]["text"] == ""
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0][A]["deleted"] is True
+    assert outcomes[0][A]["attributes"]["bold"] is True
+

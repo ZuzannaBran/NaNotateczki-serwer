@@ -452,6 +452,28 @@ def apply_operation(
         ] = candidate
         return current, None
     node = objects.get(op.object_id)
+    if node is None and not is_create:
+        matches = [
+            (page_id, other_page, other_page.get("objects", {})[op.object_id])
+            for page_id, other_page in pages.items()
+            if op.object_id in other_page.get("objects", {})
+        ]
+        if len(matches) > 1:
+            raise ProjectionError("Object ID is duplicated across pages.")
+        if matches:
+            page_id, relocated_page, moved = matches[0]
+            last_move = moved.get("lastMove")
+            if (
+                not isinstance(last_move, dict)
+                or set(last_move) != {"rank", "actorId", "operationId"}
+                or not _valid_rank(last_move["rank"])
+                or last_move["actorId"] == op.actor_id
+                or last_move["operationId"] in op.dependencies
+            ):
+                raise ProjectionError("Causal object source is inconsistent.")
+            page = relocated_page
+            objects = page.setdefault("objects", {})
+            node = moved
     if is_create:
         if any(
             op.object_id in candidate.get("objects", {})

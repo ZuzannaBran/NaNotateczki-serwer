@@ -865,3 +865,48 @@ def test_concurrent_stroke_point_register_converges_in_both_orders():
             high.logical_clock, high.actor_id, high.actor_seq,
             high.operation_id,
         ]
+
+
+
+def test_concurrent_stale_page_edits_rebase_after_move():
+    state, deleted = seeded()
+    state = apply(state, op(100, "page.create", target="new"), deleted)
+    state = apply(
+        state,
+        op(101, "stroke.create", page="p", target="ink",
+           props={"value": {"colorValue": 1, "sortIndex": 0}}),
+        deleted,
+    )
+    moved = op(
+        102, "object.move", page="p", target="ink", actor="device-move",
+        props={"toPageId": "new", "sortIndex": 3}, clock=200,
+    )
+    style = op(
+        103, "object.set", page="p", target="ink", actor="device-style",
+        props={"properties": {"colorValue": 2}}, clock=201,
+    )
+    for events in [(moved, style), (style, moved)]:
+        result = deepcopy(state)
+        for event in events:
+            result = apply(result, event, deleted)
+        assert "ink" not in result["pages"]["p"]["objects"]
+        ink = result["pages"]["new"]["objects"]["ink"]
+        assert ink["properties"]["colorValue"] == 2
+        assert ink["properties"]["sortIndex"] == 3
+
+
+def test_stale_source_from_same_actor_does_not_get_silently_rebased():
+    state, deleted = seeded()
+    state = apply(state, op(110, "page.create", target="new"), deleted)
+    state = apply(state, op(111, "stroke.create", page="p", target="ink"), deleted)
+    state = apply(
+        state, op(112, "object.move", page="p", target="ink",
+                  props={"toPageId": "new", "sortIndex": 0},
+                  actor="device-a"), deleted,
+    )
+    with pytest.raises(ProjectionError, match="Causal object source"):
+        apply(
+            state, op(113, "object.set", page="p", target="ink",
+                      actor="device-a",
+                      props={"properties": {"colorValue": 2}}), deleted,
+        )
