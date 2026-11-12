@@ -521,7 +521,8 @@ async def list_v2_backups(
 async def _list_backups(
     user: User, session: AsyncSession, *, v2: bool,
 ) -> dict:
-    await _require_backup_protocol(session, user.id, v2=v2)
+    if v2:
+        await require_v2_protocol(session, user.id)
     result = await session.execute(
         select(DeviceBackup)
         .where(
@@ -568,7 +569,8 @@ async def download_v2_backup(
 async def _download_backup(
     backup_id: uuid.UUID, user: User, session: AsyncSession, *, v2: bool,
 ) -> FileResponse:
-    await _require_backup_protocol(session, user.id, v2=v2)
+    if v2:
+        await require_v2_protocol(session, user.id)
     backup = await owned_backup(backup_id, user.id, session)
     if backup.format_version != (3 if v2 else 2):
         raise HTTPException(status_code=404, detail="Backup not found.")
