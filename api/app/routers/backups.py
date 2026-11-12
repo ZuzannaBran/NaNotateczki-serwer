@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import binascii
 import re
 import hashlib
 import json
@@ -458,7 +459,7 @@ def validate_v2_archive(envelope: dict, backup: DeviceBackup) -> None:
             raise ValueError("asset receipt mismatch")
         try:
             data = base64.b64decode(record["bytesBase64"], validate=True)
-        except (ValueError, base64.binascii.Error) as error:
+        except (ValueError, binascii.Error) as error:
             raise ValueError("invalid asset encoding") from error
         if len(data) != length or hashlib.sha256(data).hexdigest() != digest:
             raise ValueError("corrupt archived asset")
