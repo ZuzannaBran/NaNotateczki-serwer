@@ -57,6 +57,25 @@ def test_large_finalizations_are_serialized(monkeypatch):
     assert session.checks == 2
 
 
+def test_v2_backup_finalize_keeps_explicit_version_routing(monkeypatch):
+    seen = []
+
+    async def fake_finalize(*args, **kwargs):
+        seen.append(kwargs)
+        return {"status": "verified"}
+
+    monkeypatch.setattr(backups, "_finalize_backup", fake_finalize)
+
+    session = MemorySession(protocol="v2")
+    result = asyncio.run(backups.finalize_v2_backup(
+        uuid.uuid4(), SimpleNamespace(id=uuid.uuid4()), session,
+    ))
+    assert result == {"status": "verified"}
+    assert seen == [{"v2": True}]
+    assert session.checks == 1
+
+
+
 def test_v2_backup_finalize_rejected_before_finalization(monkeypatch):
     async def should_not_finalize(*args):
         pytest.fail("Legacy finalization must not run on a v2 account.")
