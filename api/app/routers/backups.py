@@ -76,13 +76,13 @@ async def create_v2_backup(
 async def _create_backup(
     body: BackupCreate, user: User, session: AsyncSession, *, v2: bool,
 ) -> dict:
-    if body.formatVersion != (3 if v2 else 2):
-        raise HTTPException(status_code=422, detail="Wrong backup protocol version.")
     settings = get_settings()
     if body.sizeBytes > settings.maximum_backup_bytes:
         raise HTTPException(status_code=413, detail="Backup is too large.")
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
     await _require_backup_protocol(session, user.id, v2=v2)
+    if body.formatVersion != (3 if v2 else 2):
+        raise HTTPException(status_code=422, detail="Wrong backup protocol version.")
     device = await session.get(Device, body.deviceId)
     now = datetime.now(UTC)
     if device is None:
@@ -208,7 +208,9 @@ async def _finalize_backup_with_protocol(
 ) -> dict:
     async with _finalize_lock:
         await _require_backup_protocol(session, user.id, v2=v2)
-        return await _finalize_backup(backup_id, user, session, v2=v2)
+        if v2:
+            return await _finalize_backup(backup_id, user, session, v2=True)
+        return await _finalize_backup(backup_id, user, session)
 
 
 async def _finalize_backup(
@@ -458,11 +460,12 @@ def validate_v2_archive(envelope: dict, backup: DeviceBackup) -> None:
             type(record["sizeBytes"]) is not int
             or record["sizeBytes"] != length
             or record["mediaType"] != mime
-            or not isinstance(record["bytesBase64"], str)
         ):
             raise ValueError("asset receipt mismatch")
         if record.get("storage") == "verified-v2":
             continue
+        if not isinstance(record["bytesBase64"], str):
+            raise ValueError("invalid asset base64 type")
         try:
             data = base64.b64decode(record["bytesBase64"], validate=True)
         except (ValueError, binascii.Error) as error:
