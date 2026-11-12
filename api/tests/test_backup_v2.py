@@ -215,6 +215,60 @@ def test_content_addressed_references_are_not_reserialized(monkeypatch):
         ))
 
 
+def test_verified_reference_needs_no_embedded_base64_but_inline_bytes_do():
+    record, envelope = fixture(media=True)
+    digest = next(iter(envelope["payload"]["assetBlobs"]))
+    stored = envelope["payload"]["assetBlobs"][digest]
+    envelope["payload"]["assetBlobs"][digest] = {
+        "sizeBytes": stored["sizeBytes"],
+        "mediaType": stored["mediaType"],
+        "storage": "verified-v2",
+    }
+    sign(envelope)
+    validate_envelope(envelope, record)
+
+    for malformed in (None, [], {"unexpected": True}, 42):
+        envelope["payload"]["assetBlobs"][digest] = {
+            "sizeBytes": stored["sizeBytes"],
+            "mediaType": stored["mediaType"],
+            "bytesBase64": malformed,
+        }
+        sign(envelope)
+        with pytest.raises(ValueError, match="base64"):
+            validate_envelope(envelope, record)
+
+
+def test_wrong_backup_format_is_rejected_after_protocol_fence(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from app.routers import backups
+
+    called = []
+
+    async def fence(session, owner_id, *, v2):
+        called.append(v2)
+        raise HTTPException(status_code=409, detail="wrong protocol")
+
+    monkeypatch.setattr(backups, "_require_backup_protocol", fence)
+
+    class Session:
+        async def execute(self, statement):
+            return None
+
+    async def rejected():
+        return await backups._create_backup(
+            SimpleNamespace(sizeBytes=10, formatVersion=9),
+            SimpleNamespace(id=uuid.uuid4()), Session(), v2=False,
+        )
+
+    with pytest.raises(HTTPException) as rejected_result:
+        asyncio.run(rejected())
+    assert rejected_result.value.status_code == 409
+    assert called == [False]
+
+
 def test_reference_asset_with_modified_owner_or_mime_is_rejected():
     record, envelope = fixture(media=True)
     digest = next(iter(envelope["payload"]["assetBlobs"]))
