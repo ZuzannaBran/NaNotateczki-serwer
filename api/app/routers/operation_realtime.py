@@ -75,7 +75,7 @@ def validate_preview(data: object) -> dict | None:
 
 async def receive_share_previews(
     websocket: WebSocket, token: str, bound_share: uuid.UUID | None,
-) -> None:
+) -> bool:
     """A preview never enters PostgreSQL, the reducer, or the ACK history."""
     last_sent = 0.0
     while True:
@@ -83,9 +83,14 @@ async def receive_share_previews(
         if len(raw) > 12000:
             continue
         try:
-            preview = validate_preview(json.loads(raw))
+            message = json.loads(raw)
         except (ValueError, TypeError):
             continue
+        # An authenticated client can finish its own subscription cleanly,
+        # without relying on asynchronous transport teardown ordering.
+        if message == {"type": "unsubscribe"}:
+            return True
+        preview = validate_preview(message)
         if preview is None:
             continue
         now = asyncio.get_running_loop().time()
@@ -167,7 +172,8 @@ async def watch_operations(websocket: WebSocket) -> None:
                             next_event, return_exceptions=True,
                         )
                 if reader in done:
-                    await reader
+                    if await reader:
+                        await websocket.send_json({"type": "unsubscribed"})
                     return
                 event = next_event.result() if next_event in done else {
                     "type": "ping",
