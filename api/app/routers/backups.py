@@ -16,8 +16,9 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..account_protocol import require_legacy_protocol, require_v2_protocol
+from ..asset_store import asset_path, valid_verified_file
 from ..database import database_session
-from ..models import Device, DeviceBackup, DocumentOperation, User
+from ..models import Device, DeviceBackup, DocumentOperation, User, VerifiedAsset
 from ..operation_protocol import InvalidOperation, OperationEnvelope
 from ..schemas import BackupCreate, validate_notebook_payload
 from ..security import current_user
