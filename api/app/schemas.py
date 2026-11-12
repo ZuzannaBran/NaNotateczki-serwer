@@ -105,4 +105,4 @@ class BackupCreate(BaseModel):
     deviceId: UUID
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     sizeBytes: int = Field(gt=0)
-    formatVersion: Literal[2]
+    formatVersion: Literal[2, 3]
