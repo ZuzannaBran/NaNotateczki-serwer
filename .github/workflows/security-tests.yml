@@ -27,6 +27,8 @@ jobs:
       - name: Run security regression tests
         working-directory: api
         run: python -m pytest -q tests
+      - name: Verify offline canary activation safety
+        run: python -m unittest discover -s scripts/tests -p 'test_stage13_canary_activation.py'
       - name: Validate Docker Compose
         env:
           POSTGRES_PASSWORD: test-only-password

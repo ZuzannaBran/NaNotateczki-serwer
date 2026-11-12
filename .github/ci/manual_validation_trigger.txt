@@ -1,1 +1,1 @@
-packages1-5-full-v2-backend-verification-2026-11-12
+package8-activation-readiness-full-backend-verification-2026-11-12
