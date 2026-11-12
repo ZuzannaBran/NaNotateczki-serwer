@@ -514,6 +514,13 @@ def test_real_websocket_share_delivery_and_revocation(client):
         submit(client, ticket, [a], share_id=share_id)
         assert owner_ws.receive_json()["type"] == "operations_changed"
         assert guest_ws.receive_json()["type"] == "operations_changed"
+        # Confirm server-side shutdown before TestClient closes transports.
+        # Closing both live sessions concurrently could cancel the portal
+        # future even after all data assertions had already passed.
+        owner_ws.send_json({"type": "unsubscribe"})
+        guest_ws.send_json({"type": "unsubscribe"})
+        assert owner_ws.receive_json() == {"type": "unsubscribed"}
+        assert guest_ws.receive_json() == {"type": "unsubscribed"}
     objects = snapshot(client, token, document)["state"]["pages"][page]["objects"]
     assert set(objects) == {"alpha", "beta"}
 
