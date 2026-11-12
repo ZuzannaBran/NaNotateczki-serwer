@@ -181,13 +181,16 @@ async def watch_operations(websocket: WebSocket) -> None:
         finally:
             reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
+    except WebSocketDisconnect:
+        # The peer has already closed; never send an auth failure in reply.
+        pass
     except (
-        asyncio.TimeoutError, WebSocketDisconnect, json.JSONDecodeError,
-        HTTPException, RuntimeError,
+        asyncio.TimeoutError, json.JSONDecodeError, HTTPException,
+        RuntimeError,
     ):
         try:
             await websocket.close(code=4401)
-        except RuntimeError:
+        except (RuntimeError, WebSocketDisconnect):
             pass
     finally:
         if queue is not None and key is not None:
