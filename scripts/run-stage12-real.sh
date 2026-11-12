@@ -78,6 +78,14 @@ esac
 
 (cd api && "$work/venv/bin/python" -m pytest -q \
   tests/test_stage12_real_stack.py "${selection[@]}")
+# Exercise fresh WebSocket portals repeatedly; a successful data exchange
+# must not hide cancellation when owner and guest sessions are torn down.
+for iteration in 1 2; do
+  echo "Repeating v2 share WebSocket teardown check: $iteration/2"
+  (cd api && "$work/venv/bin/python" -m pytest -q \
+    tests/test_stage12_real_stack.py \
+    -k test_real_websocket_share_delivery_and_revocation)
+done
 # Do not expose the disposable administrator credentials to the HTTP API.
 unset NN_STAGE12_FIXTURE_DATABASE_URL
 
