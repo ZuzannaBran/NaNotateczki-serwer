@@ -19,6 +19,7 @@ class CanaryActivationTest(unittest.TestCase):
             "#!/usr/bin/env bash\n"
             "if [[ \"$1 $2\" == \"compose ps\" ]]; then\n"
             "  if [[ \"${MOCK_API_RUNNING:-0}\" == 1 ]]; then echo api; fi\n"
+            "  if [[ \"${MOCK_PS_EXIT:-0}\" != 0 ]]; then exit 2; fi\n"
             "  exit 0\n"
             "fi\n"
             "if [[ \"$1 $2\" == \"compose exec\" ]]; then\n"
@@ -52,6 +53,11 @@ class CanaryActivationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 75)
         self.assertIn("API is running", result.stderr)
 
+    def test_compose_status_failure_blocks_activation(self):
+        result = self.run_script(MOCK_PS_EXIT="1", MOCK_DB_RETURN=self.owner)
+        self.assertEqual(result.returncode, 69)
+        self.assertIn("Cannot verify stopped API", result.stderr)
+
     def test_only_single_verified_insert_counts_as_success(self):
         result = self.run_script(MOCK_DB_RETURN=self.owner)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -73,9 +79,10 @@ class CanaryActivationTest(unittest.TestCase):
             "change_events", "device_backups", "account_settings",
             "planner_entries", "planner_entry_mutations",
             "actor_checkpoints", "object_tombstones",
-            "study_shares", "idempotency_records",
+            "study_shares", "idempotency_records", "verified_assets",
         ):
             self.assertIn("FROM " + table, body)
+        self.assertIn("Unknown account tables", body)
 
 
 if __name__ == "__main__":

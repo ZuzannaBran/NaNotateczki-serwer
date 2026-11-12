@@ -41,3 +41,36 @@ async def require_v2_protocol(
             status_code=409,
             detail="Account has not completed operation protocol cutover.",
         )
+
+async def require_v2_activation_ready(
+    session: AsyncSession, owner_id: uuid.UUID,
+) -> None:
+    """Block a v2 writer if unconverted v1 state is still present."""
+    await require_v2_protocol(session, owner_id)
+    result = await session.execute(
+        text("""
+            SELECT (
+                EXISTS (SELECT 1 FROM synced_notebooks
+                        WHERE owner_id = :owner_id)
+                OR EXISTS (SELECT 1 FROM change_events
+                           WHERE owner_id = :owner_id)
+                OR EXISTS (SELECT 1 FROM idempotency_records
+                           WHERE owner_id = :owner_id)
+                OR EXISTS (SELECT 1 FROM device_backups
+                           WHERE owner_id = :owner_id AND format_version <> 3)
+                OR EXISTS (SELECT 1 FROM account_settings
+                           WHERE owner_id = :owner_id
+                             AND category = 'libraryState')
+                OR EXISTS (SELECT 1 FROM study_shares
+                           WHERE owner_id = :owner_id
+                             AND COALESCE(edit_clock ->> '_protocol', '')
+                                 <> 'v2')
+            )
+        """),
+        {"owner_id": owner_id},
+    )
+    if result.scalar_one():
+        raise HTTPException(
+            status_code=409,
+            detail="Legacy account data has not been converted to v2.",
+        )

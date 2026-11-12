@@ -84,3 +84,74 @@ def test_authenticated_protocol_probe_returns_account_mode():
             "protocol": expected,
         }
         assert session.queries == 1
+
+
+class ReadinessSession(ProtocolSession):
+    def __init__(self, mode, legacy=False):
+        super().__init__(mode)
+        self.legacy = legacy
+
+    async def execute(self, query, params):
+        if "synced_notebooks" not in str(query):
+            return await super().execute(query, params)
+        self.queries += 1
+        assert isinstance(params["owner_id"], uuid.UUID)
+
+        class Result:
+            def scalar_one(inner_self):
+                return self.legacy
+
+        return Result()
+
+
+def test_activation_readiness_rejects_v1_and_unconverted_v2():
+    from app.account_protocol import require_v2_activation_ready
+
+    owner = uuid.uuid4()
+    for marker, legacy in ((None, False), ("v2", True)):
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(require_v2_activation_ready(
+                ReadinessSession(marker, legacy), owner,
+            ))
+        assert error.value.status_code == 409
+    verified = ReadinessSession("v2")
+    asyncio.run(require_v2_activation_ready(verified, owner))
+    assert verified.queries == 2
+
+
+def test_activation_endpoint_requires_marker_and_canary_allowlist(monkeypatch):
+    from types import SimpleNamespace
+    from app.routers import operations
+
+    owner = uuid.uuid4()
+
+    async def authorize(session, authorization, share_id):
+        assert authorization == "Bearer test" and share_id is None
+        return operations.Principal(owner, "owner", owner)
+
+    monkeypatch.setattr(operations, "authorize", authorize)
+    def config(allowed):
+        return SimpleNamespace(
+            operations_v2_write_mode="canary",
+            operations_v2_canary_owner_ids=str(allowed),
+        )
+    monkeypatch.setattr(operations, "get_settings", lambda: config(owner))
+
+    def check(session):
+        return asyncio.run(operations.get_activation_readiness(
+            authorization="Bearer test", session=session,
+        ))
+
+    assert check(ReadinessSession("v2")) == {
+        "protocol": "v2", "writeEnabled": True, "version": 1,
+    }
+    for session in (ReadinessSession(None), ReadinessSession("v2", True)):
+        with pytest.raises(HTTPException) as error:
+            check(session)
+        assert error.value.status_code == 409
+    monkeypatch.setattr(
+        operations, "get_settings", lambda: config(uuid.uuid4()),
+    )
+    with pytest.raises(HTTPException) as error:
+        check(ReadinessSession("v2"))
+    assert error.value.status_code == 403

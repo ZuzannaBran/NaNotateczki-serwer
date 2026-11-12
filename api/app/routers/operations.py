@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_protocol import require_v2_protocol
+from ..account_protocol import require_v2_activation_ready, require_v2_protocol
 from ..database import database_session
 from ..models import (
     ActorCheckpoint, DocumentOperation, DocumentState, ObjectTombstone,
@@ -406,6 +406,21 @@ def require_operations_v2_write(owner_id: uuid.UUID) -> None:
         status_code=403,
         detail="Operation sync v2 is not enabled for this account.",
     )
+
+
+
+@router.get("/activation/readiness")
+async def get_activation_readiness(
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    """Verify persisted protocol, old state, and explicit write allowlist."""
+    principal = await authorize(session, authorization, None)
+    if principal.kind != "owner":
+        raise HTTPException(status_code=403, detail="Account owner required.")
+    await require_v2_activation_ready(session, principal.owner_id)
+    require_operations_v2_write(principal.owner_id)
+    return {"protocol": "v2", "writeEnabled": True, "version": 1}
 
 
 @router.post("/operations/batch")
