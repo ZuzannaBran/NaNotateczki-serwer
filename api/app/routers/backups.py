@@ -445,9 +445,12 @@ def validate_v2_archive(envelope: dict, backup: DeviceBackup) -> None:
     for digest, record in blobs.items():
         if not isinstance(digest, str) or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
             raise ValueError("invalid asset digest")
-        if not isinstance(record, dict) or set(record) != {
-            "sizeBytes", "mediaType", "bytesBase64",
-        }:
+        if not isinstance(record, dict):
+            raise ValueError("invalid asset archive")
+        if record.get("storage") == "verified-v2":
+            if set(record) != {"sizeBytes", "mediaType", "storage"}:
+                raise ValueError("invalid external asset receipt")
+        elif set(record) != {"sizeBytes", "mediaType", "bytesBase64"}:
             raise ValueError("invalid asset archive")
         length, mime = required_assets[digest]
         if (
@@ -457,6 +460,8 @@ def validate_v2_archive(envelope: dict, backup: DeviceBackup) -> None:
             or not isinstance(record["bytesBase64"], str)
         ):
             raise ValueError("asset receipt mismatch")
+        if record.get("storage") == "verified-v2":
+            continue
         try:
             data = base64.b64decode(record["bytesBase64"], validate=True)
         except (ValueError, binascii.Error) as error:
@@ -491,6 +496,23 @@ async def _validate_verified_v2_history(
         index += 1
     if index != len(history):
         raise ValueError("archive omits or forges committed operations")
+    # A v2 asset is immutable, content-addressed and scoped to this owner.
+    # Reference it instead of duplicating large unmodified PDFs per backup.
+    for digest, item in envelope["payload"]["assetBlobs"].items():
+        if item.get("storage") != "verified-v2":
+            continue
+        asset = await session.get(VerifiedAsset, (backup.owner_id, digest))
+        if (
+            asset is None
+            or asset.size_bytes != item["sizeBytes"]
+            or asset.media_type != item["mediaType"]
+            or not valid_verified_file(
+                asset_path(get_settings().data_path, backup.owner_id, digest),
+                digest,
+                asset.size_bytes,
+            )
+        ):
+            raise ValueError("archived asset reference is not durable")
 
 
 async def _require_backup_protocol(
