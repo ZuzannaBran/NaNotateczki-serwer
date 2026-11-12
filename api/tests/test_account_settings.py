@@ -251,3 +251,71 @@ def test_v2_account_cannot_write_legacy_account_settings(monkeypatch):
     assert session.protocol_checks == 1
     assert session.records == {}
     assert session.commits == 0
+
+
+def test_v2_settings_cas_and_protocol_fence(monkeypatch):
+    account = User(id=uuid.uuid4(), username="v2", password_hash="hash")
+    legacy = User(id=uuid.uuid4(), username="v1", password_hash="hash")
+    session = MemorySession()
+    session.protocols[account.id] = "v2"
+
+    async def publish(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(api.hub, "publish", publish)
+
+    async def run():
+        created = await api.put_v2_account_settings(
+            "appPreferences",
+            api.SettingsWrite(expectedRevision=0, value={"darkMode": True}),
+            account, session,
+        )
+        assert created["revision"] == 1
+        with pytest.raises(HTTPException) as stale:
+            await api.put_v2_account_settings(
+                "appPreferences",
+                api.SettingsWrite(expectedRevision=0, value={"darkMode": False}),
+                account, session,
+            )
+        assert stale.value.status_code == 409
+        assert stale.value.detail["value"]["darkMode"] is True
+        with pytest.raises(HTTPException) as wrong_protocol:
+            await api.put_v2_account_settings(
+                "appPreferences",
+                api.SettingsWrite(expectedRevision=0, value={"darkMode": False}),
+                legacy, session,
+            )
+        assert wrong_protocol.value.status_code == 409
+        assert session.records[(account.id, "appPreferences")].revision == 1
+
+    asyncio.run(run())
+    assert session.commits == 1
+    assert "libraryState" not in api.V2Category.__args__
+
+
+def test_v2_settings_read_excludes_library_state():
+    account = User(id=uuid.uuid4(), username="v2", password_hash="hash")
+    records = [
+        AccountSettings(owner_id=account.id, category="appPreferences",
+                        revision=2, content={"darkMode": True}),
+        AccountSettings(owner_id=account.id, category="libraryState",
+                        revision=8, content={"folders": ["School"]}),
+    ]
+
+    class ReadSession:
+        async def execute(self, statement, parameters=None):
+            if parameters is not None:
+                return SimpleNamespace(scalar_one_or_none=lambda: "v2")
+            return SimpleNamespace(scalars=lambda: iter(records))
+
+    response = asyncio.run(api.get_v2_account_settings(
+        account, ReadSession(),
+    ))
+    assert response == {
+        "settings": {
+            "appPreferences": {
+                "revision": 2,
+                "value": {"darkMode": True},
+            },
+        },
+    }

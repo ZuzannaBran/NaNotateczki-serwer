@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_protocol import require_legacy_protocol
+from ..account_protocol import require_legacy_protocol, require_v2_protocol
 from ..database import database_session
 from ..models import AccountSettings, User
 from ..realtime_hub import hub
@@ -24,6 +24,10 @@ Category = Literal[
 ]
 
 router = APIRouter(prefix="/v1/account-settings", tags=["account-settings"])
+v2_router = APIRouter(prefix="/v2/account-settings", tags=["account-settings-v2"])
+V2Category = Literal[
+    "appPreferences", "editorPreferences", "recentColors", "backupPreferences",
+]
 MAX_SETTING_BYTES = 128 * 1024
 BACKUP_IDLE_SECONDS = {15, 30, 60, 120, 300, 900, 1800}
 APP_PREFERENCE_KEYS = {
@@ -112,6 +116,35 @@ async def put_account_settings(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    return await _put_settings(
+        category, body, user, session, require_legacy_protocol
+    )
+
+
+@v2_router.get("")
+async def get_v2_account_settings(
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    await require_v2_protocol(session, user.id)
+    response = await get_account_settings(user, session)
+    response["settings"].pop("libraryState", None)
+    return response
+
+
+@v2_router.put("/{category}")
+async def put_v2_account_settings(
+    category: V2Category,
+    body: SettingsWrite,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    return await _put_settings(
+        category, body, user, session, require_v2_protocol
+    )
+
+
+async def _put_settings(category, body, user, session, protocol_guard) -> dict:
     try:
         value = validate_settings(category, body.value)
     except ValueError as error:
@@ -120,7 +153,7 @@ async def put_account_settings(
     # Lock the account row even when this category has not been created.
     # This serializes two first writes and makes the revision check atomic.
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
-    await require_legacy_protocol(session, user.id)
+    await protocol_guard(session, user.id)
     record = await session.get(AccountSettings, (user.id, category))
     current_revision = record.revision if record is not None else 0
     if body.expectedRevision != current_revision:

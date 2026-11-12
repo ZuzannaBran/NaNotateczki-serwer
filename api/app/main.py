@@ -99,6 +99,7 @@ async def ready() -> dict:
 
 app.include_router(auth.router)
 app.include_router(account_settings.router)
+app.include_router(account_settings.v2_router)
 app.include_router(planner.router)
 app.include_router(planner_v2.router)
 app.include_router(backups.router)
