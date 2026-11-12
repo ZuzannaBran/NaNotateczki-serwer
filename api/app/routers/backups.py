@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import re
 import hashlib
 import json
 import logging
@@ -12,15 +14,17 @@ from fastapi.responses import FileResponse
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_protocol import require_legacy_protocol
+from ..account_protocol import require_legacy_protocol, require_v2_protocol
 from ..database import database_session
-from ..models import Device, DeviceBackup, User
+from ..models import Device, DeviceBackup, DocumentOperation, User
+from ..operation_protocol import InvalidOperation, OperationEnvelope
 from ..schemas import BackupCreate, validate_notebook_payload
 from ..security import current_user
 from ..settings import get_settings
 
 
 router = APIRouter(prefix="/v1/backups", tags=["backups"])
+v2_router = APIRouter(prefix="/v2/backups", tags=["backups-v2"])
 logger = logging.getLogger(__name__)
 # One worker has a 700 MiB memory limit. Validate large JSON snapshots
 # serially to avoid simultaneous 64 MiB deserializations exhausting memory.
@@ -55,11 +59,28 @@ async def create_backup(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    return await _create_backup(body, user, session, v2=False)
+
+
+@v2_router.post("", status_code=201)
+async def create_v2_backup(
+    body: BackupCreate,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    return await _create_backup(body, user, session, v2=True)
+
+
+async def _create_backup(
+    body: BackupCreate, user: User, session: AsyncSession, *, v2: bool,
+) -> dict:
+    if body.formatVersion != (3 if v2 else 2):
+        raise HTTPException(status_code=422, detail="Wrong backup protocol version.")
     settings = get_settings()
     if body.sizeBytes > settings.maximum_backup_bytes:
         raise HTTPException(status_code=413, detail="Backup is too large.")
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
-    await require_legacy_protocol(session, user.id)
+    await _require_backup_protocol(session, user.id, v2=v2)
     device = await session.get(Device, body.deviceId)
     now = datetime.now(UTC)
     if device is None:
@@ -100,8 +121,28 @@ async def upload_content(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> None:
+    return await _upload_content(backup_id, request, content_sha256, user, session, v2=False)
+
+
+@v2_router.put("/{backup_id}/content", status_code=204)
+async def upload_v2_content(
+    backup_id: uuid.UUID,
+    request: Request,
+    content_sha256: str = Header(alias="X-Content-SHA256"),
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> None:
+    return await _upload_content(backup_id, request, content_sha256, user, session, v2=True)
+
+
+async def _upload_content(
+    backup_id: uuid.UUID, request: Request, content_sha256: str,
+    user: User, session: AsyncSession, *, v2: bool,
+) -> None:
     backup = await owned_backup(backup_id, user.id, session, lock=True)
-    await require_legacy_protocol(session, user.id)
+    await _require_backup_protocol(session, user.id, v2=v2)
+    if backup.format_version != (3 if v2 else 2):
+        raise HTTPException(status_code=404, detail="Backup not found.")
     if backup.status != "pending":
         raise HTTPException(status_code=409, detail="Backup is not pending.")
     if content_sha256 != backup.sha256:
@@ -144,15 +185,37 @@ async def finalize_backup(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    return await _finalize_backup_with_protocol(
+        backup_id, user, session, v2=False,
+    )
+
+
+@v2_router.post("/{backup_id}/finalize")
+async def finalize_v2_backup(
+    backup_id: uuid.UUID,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    return await _finalize_backup_with_protocol(
+        backup_id, user, session, v2=True,
+    )
+
+
+async def _finalize_backup_with_protocol(
+    backup_id: uuid.UUID, user: User, session: AsyncSession, *, v2: bool,
+) -> dict:
     async with _finalize_lock:
-        await require_legacy_protocol(session, user.id)
-        return await _finalize_backup(backup_id, user, session)
+        await _require_backup_protocol(session, user.id, v2=v2)
+        return await _finalize_backup(backup_id, user, session, v2=v2)
 
 
 async def _finalize_backup(
     backup_id: uuid.UUID, user: User, session: AsyncSession,
+    *, v2: bool = False,
 ) -> dict:
     backup = await owned_backup(backup_id, user.id, session, lock=True)
+    if backup.format_version != (3 if v2 else 2):
+        raise HTTPException(status_code=404, detail="Backup not found.")
     if backup.status != "pending":
         raise HTTPException(status_code=409, detail="Backup is not pending.")
     target = backup_root() / backup.storage_key
@@ -163,6 +226,8 @@ async def _finalize_backup(
         raw = await asyncio.to_thread(temporary.read_bytes)
         envelope = json.loads(raw)
         validate_envelope(envelope, backup, original_json=raw)
+        if v2:
+            await _validate_verified_v2_history(envelope, backup, session)
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
         logger.warning("Rejected backup %s: %s", backup.id, error)
         backup.status = "rejected"
@@ -267,8 +332,8 @@ def validate_envelope(
         raise ValueError("backup envelope must be an object")
     if (
         envelope.get("format") != "nanotateczki-server-backup"
-        or envelope.get("version") != 2
-        or backup.format_version != 2
+        or envelope.get("version") != backup.format_version
+        or backup.format_version not in (2, 3)
         or envelope.get("deviceId") != str(backup.device_id)
         or envelope.get("checksumAlgorithm") != "sha256"
         or not isinstance(envelope.get("payload"), dict)
@@ -297,6 +362,8 @@ def validate_envelope(
             ):
                 raise ValueError("invalid operation checkpoint entry")
     payload = envelope["payload"]
+    if backup.format_version == 3:
+        validate_v2_archive(envelope, backup)
     if (
         not isinstance(payload.get("notebooks"), list)
         or not isinstance(payload.get("libraryState"), dict)
@@ -338,14 +405,129 @@ def validate_envelope(
         raise ValueError("payload checksum mismatch")
 
 
+def validate_v2_archive(envelope: dict, backup: DeviceBackup) -> None:
+    """Fail closed on incomplete operational frontiers and corrupt assets."""
+    if envelope.get("protocol") != "operations-v2":
+        raise ValueError("invalid operational backup protocol")
+    cursor_map = envelope["operationCheckpoint"]
+    key = f"account:{backup.owner_id}"
+    if set(cursor_map) != {key}:
+        raise ValueError("invalid v2 checkpoint scope")
+    cursor = cursor_map[key]
+    history = envelope["payload"].get("operationHistory")
+    blobs = envelope["payload"].get("assetBlobs")
+    if not isinstance(history, list) or not isinstance(blobs, dict):
+        raise ValueError("missing v2 operational history or assets")
+    previous = 0
+    required_assets: dict[str, tuple[int, str]] = {}
+    for item in history:
+        if not isinstance(item, dict) or set(item) != {"cursor", "operation"}:
+            raise ValueError("invalid backed-up operation")
+        sequence = item["cursor"]
+        if type(sequence) is not int or not previous < sequence <= cursor:
+            raise ValueError("invalid backed-up operation cursor")
+        previous = sequence
+        try:
+            operation = OperationEnvelope.from_dict(item["operation"])
+        except InvalidOperation as error:
+            raise ValueError("invalid backed-up operation envelope") from error
+        if operation.kind == "asset.attach":
+            digest = operation.payload["sha256"]
+            receipt = (operation.payload["sizeBytes"], operation.payload["mediaType"])
+            if digest in required_assets and required_assets[digest] != receipt:
+                raise ValueError("conflicting asset receipt")
+            required_assets[digest] = receipt
+    if previous != cursor:
+        raise ValueError("incomplete backed-up operation frontier")
+    if set(blobs) != set(required_assets):
+        raise ValueError("incomplete backed-up assets")
+    for digest, record in blobs.items():
+        if not isinstance(digest, str) or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
+            raise ValueError("invalid asset digest")
+        if not isinstance(record, dict) or set(record) != {
+            "sizeBytes", "mediaType", "bytesBase64",
+        }:
+            raise ValueError("invalid asset archive")
+        length, mime = required_assets[digest]
+        if (
+            type(record["sizeBytes"]) is not int
+            or record["sizeBytes"] != length
+            or record["mediaType"] != mime
+            or not isinstance(record["bytesBase64"], str)
+        ):
+            raise ValueError("asset receipt mismatch")
+        try:
+            data = base64.b64decode(record["bytesBase64"], validate=True)
+        except (ValueError, base64.binascii.Error) as error:
+            raise ValueError("invalid asset encoding") from error
+        if len(data) != length or hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError("corrupt archived asset")
+
+
+async def _validate_verified_v2_history(
+    envelope: dict, backup: DeviceBackup, session: AsyncSession,
+) -> None:
+    """Every archived cursor and envelope must match the owner's journal."""
+    history = envelope["payload"]["operationHistory"]
+    cursor = envelope["operationCheckpoint"][f"account:{backup.owner_id}"]
+    statement = (
+        select(DocumentOperation)
+        .where(
+            DocumentOperation.owner_id == backup.owner_id,
+            DocumentOperation.cursor <= cursor,
+        )
+        .order_by(DocumentOperation.cursor)
+    )
+    result = await session.stream_scalars(statement)
+    index = 0
+    async for row in result:
+        if (
+            index >= len(history)
+            or row.cursor != history[index]["cursor"]
+            or row.envelope != history[index]["operation"]
+        ):
+            raise ValueError("archive does not match committed journal")
+        index += 1
+    if index != len(history):
+        raise ValueError("archive omits or forges committed operations")
+
+
+async def _require_backup_protocol(
+    session: AsyncSession, owner_id: uuid.UUID, *, v2: bool,
+) -> None:
+    if v2:
+        await require_v2_protocol(session, owner_id)
+    else:
+        await require_legacy_protocol(session, owner_id)
+
+
 @router.get("")
 async def list_backups(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    return await _list_backups(user, session, v2=False)
+
+
+@v2_router.get("")
+async def list_v2_backups(
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    return await _list_backups(user, session, v2=True)
+
+
+async def _list_backups(
+    user: User, session: AsyncSession, *, v2: bool,
+) -> dict:
+    await _require_backup_protocol(session, user.id, v2=v2)
     result = await session.execute(
         select(DeviceBackup)
-        .where(DeviceBackup.owner_id == user.id, DeviceBackup.status == "verified")
+        .where(
+            DeviceBackup.owner_id == user.id,
+            DeviceBackup.status == "verified",
+            DeviceBackup.format_version == (3 if v2 else 2),
+        )
         .order_by(desc(DeviceBackup.verified_at), desc(DeviceBackup.created_at))
         .limit(100)
     )
@@ -370,7 +552,25 @@ async def download_backup(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> FileResponse:
+    return await _download_backup(backup_id, user, session, v2=False)
+
+
+@v2_router.get("/{backup_id}/download")
+async def download_v2_backup(
+    backup_id: uuid.UUID,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(database_session),
+) -> FileResponse:
+    return await _download_backup(backup_id, user, session, v2=True)
+
+
+async def _download_backup(
+    backup_id: uuid.UUID, user: User, session: AsyncSession, *, v2: bool,
+) -> FileResponse:
+    await _require_backup_protocol(session, user.id, v2=v2)
     backup = await owned_backup(backup_id, user.id, session)
+    if backup.format_version != (3 if v2 else 2):
+        raise HTTPException(status_code=404, detail="Backup not found.")
     if backup.status != "verified":
         raise HTTPException(status_code=404, detail="Verified backup not found.")
     path = backup_root() / backup.storage_key
