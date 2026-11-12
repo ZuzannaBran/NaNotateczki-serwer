@@ -173,3 +173,58 @@ def test_old_format_does_not_accept_operational_archive():
     sign(envelope)
     with pytest.raises(ValueError, match="unsupported envelope"):
         validate_envelope(envelope, record)
+def test_content_addressed_references_are_not_reserialized(monkeypatch):
+    from app.routers import backups
+
+    record, envelope = fixture(media=True)
+    digest = next(iter(envelope["payload"]["assetBlobs"]))
+    previous = envelope["payload"]["assetBlobs"][digest]
+    envelope["payload"]["assetBlobs"][digest] = {
+        "sizeBytes": previous["sizeBytes"],
+        "mediaType": previous["mediaType"],
+        "storage": "verified-v2",
+    }
+    sign(envelope)
+    validate_envelope(envelope, record)
+    assert "bytesBase64" not in json.dumps(envelope)
+
+    class FakeSession:
+        async def stream_scalars(self, statement):
+            async def rows():
+                yield SimpleNamespace(
+                    cursor=7,
+                    envelope=envelope["payload"]["operationHistory"][0]["operation"],
+                )
+            return rows()
+
+        async def get(self, model, identity):
+            assert identity == (record.owner_id, digest)
+            return SimpleNamespace(
+                size_bytes=previous["sizeBytes"],
+                media_type=previous["mediaType"],
+            )
+
+    monkeypatch.setattr(backups, "valid_verified_file", lambda *args: True)
+    asyncio.run(_validate_verified_v2_history(
+        envelope, record, FakeSession(),
+    ))
+    monkeypatch.setattr(backups, "valid_verified_file", lambda *args: False)
+    with pytest.raises(ValueError, match="not durable"):
+        asyncio.run(_validate_verified_v2_history(
+            envelope, record, FakeSession(),
+        ))
+
+
+def test_reference_asset_with_modified_owner_or_mime_is_rejected():
+    record, envelope = fixture(media=True)
+    digest = next(iter(envelope["payload"]["assetBlobs"]))
+    record_blob = envelope["payload"]["assetBlobs"][digest]
+    record_blob.clear()
+    record_blob.update({
+        "sizeBytes": 15,
+        "mediaType": "image/png",
+        "storage": "verified-v2",
+    })
+    sign(envelope)
+    with pytest.raises(ValueError, match="receipt"):
+        validate_envelope(envelope, record)
