@@ -101,3 +101,48 @@ def test_v2_normal_disconnect_releases_subscription_without_auth_close(
     assert socket.receives == 2
     assert socket.closed_codes == []
     assert not operation_realtime.hub._queues.get(owner)
+
+
+class GracefulV2WebSocket(DisconnectV2WebSocket):
+    def __init__(self):
+        super().__init__()
+        self.incoming = [
+            '{"type": "authenticate", "token": "test-token"}',
+            '{"type": "unsubscribe", "unexpected": true}',
+            '{"type": "unsubscribe"}',
+        ]
+
+    async def receive_text(self):
+        self.receives += 1
+        return self.incoming.pop(0)
+
+
+def test_v2_graceful_unsubscribe_acknowledges_and_cleans_subscription(
+    monkeypatch,
+):
+    """Logout must not depend on TestClient transport-close timing."""
+    owner = uuid.uuid4()
+    socket = GracefulV2WebSocket()
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+    async def authenticate(*_):
+        return SimpleNamespace(owner_id=owner, share_id=None)
+
+    monkeypatch.setattr(operation_realtime, "session_factory", Session)
+    monkeypatch.setattr(operation_realtime, "authorize", authenticate)
+
+    asyncio.run(operation_realtime.watch_operations(socket))
+
+    assert socket.accepted
+    assert socket.messages == [
+        {"type": "authenticated"}, {"type": "unsubscribed"},
+    ]
+    assert socket.receives == 3
+    assert socket.closed_codes == []
+    assert not operation_realtime.hub._queues.get(owner)
