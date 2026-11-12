@@ -63,7 +63,7 @@ async def security_boundary(request: Request, call_next):
             maximum = settings.maximum_sync_bytes
         elif request.url.path.startswith("/v2/assets/"):
             maximum = settings.maximum_asset_bytes
-        elif request.url.path.startswith("/v1/backups/") and request.url.path.endswith(
+        elif request.url.path.startswith(("/v1/backups/", "/v2/backups/")) and request.url.path.endswith(
             "/content"
         ):
             maximum = settings.maximum_backup_bytes
@@ -103,6 +103,7 @@ app.include_router(account_settings.v2_router)
 app.include_router(planner.router)
 app.include_router(planner_v2.router)
 app.include_router(backups.router)
+app.include_router(backups.v2_router)
 app.include_router(sync.router)
 app.include_router(operations.router)
 app.include_router(assets.router)
