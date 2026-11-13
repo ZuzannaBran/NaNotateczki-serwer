@@ -16,6 +16,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..account_protocol import require_v2_protocol
+from ..operation_rollout import require_operations_v2_write
 from ..asset_store import asset_path, valid_verified_file
 from ..database import database_session
 from ..models import Device, DeviceBackup, DocumentOperation, User, VerifiedAsset
@@ -60,6 +61,7 @@ async def create_v2_backup(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    require_operations_v2_write(user.id)
     settings = get_settings()
     if body.sizeBytes > settings.maximum_backup_bytes:
         raise HTTPException(status_code=413, detail="Backup is too large.")
@@ -107,6 +109,7 @@ async def upload_v2_content(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> None:
+    require_operations_v2_write(user.id)
     backup = await owned_backup(backup_id, user.id, session, lock=True)
     await require_v2_protocol(session, user.id)
     if backup.format_version != 3:
@@ -153,6 +156,7 @@ async def finalize_v2_backup(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    require_operations_v2_write(user.id)
     async with _finalize_lock:
         await require_v2_protocol(session, user.id)
         return await _finalize_backup(backup_id, user, session)

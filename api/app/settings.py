@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         default=64 * 1024 * 1024, alias="MAXIMUM_ASSET_BYTES", ge=1
     )
     operations_v2_write_mode: Literal["disabled", "canary", "all"] = Field(
-        default="all", alias="OPERATIONS_V2_WRITE_MODE"
+        default="disabled", alias="OPERATIONS_V2_WRITE_MODE"
     )
     operations_v2_canary_owner_ids: str = Field(
         default="", alias="OPERATIONS_V2_CANARY_OWNER_IDS"

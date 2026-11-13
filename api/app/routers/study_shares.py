@@ -17,6 +17,7 @@ from ..database import database_session, session_factory
 from ..models import (
     DocumentState, StudyShare, StudyShareGrant, User,
 )
+from ..operation_rollout import require_operations_v2_write
 from ..rate_limit import InMemoryRateLimiter
 from ..realtime_hub import hub
 from ..security import current_user, hash_password, token_digest, verify_password
@@ -109,6 +110,7 @@ async def create_v2_share(
     session: AsyncSession = Depends(database_session),
 ) -> dict:
     """Share only a committed operational document on a fenced v2 account."""
+    require_operations_v2_write(user.id)
     await lock_owner_events(session, user.id)
     await require_v2_protocol(session, user.id)
     document = await session.scalar(
@@ -190,6 +192,7 @@ async def update_share_appearance(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    require_operations_v2_write(user.id)
     # Serialized with guest edits by the same row lock; never changes the
     # document revision or its conflict clock.
     share = await owner_share(share_id, user, session, lock=True)
@@ -224,6 +227,7 @@ async def join_share(
     if share is None:
         raise HTTPException(status_code=404, detail="Session not found.")
     ensure_active(share)
+    require_operations_v2_write(share.owner_id)
     if not verify_password(body.password, share.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect session password.")
     ticket = secrets.token_urlsafe(48)
@@ -250,6 +254,7 @@ async def extend_share(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    require_operations_v2_write(user.id)
     share = await owner_share(share_id, user, session, lock=True)
     ensure_active(share)
     now = datetime.now(UTC)

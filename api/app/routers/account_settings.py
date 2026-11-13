@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..account_protocol import require_v2_protocol
 from ..database import database_session
 from ..models import AccountSettings, User
+from ..operation_rollout import require_operations_v2_write
 from ..realtime_hub import hub
 from ..security import current_user
 
@@ -125,6 +126,7 @@ async def put_v2_account_settings(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    require_operations_v2_write(user.id)
     return await _put_settings(
         category, body, user, session, require_v2_protocol
     )

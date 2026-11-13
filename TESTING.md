@@ -50,9 +50,13 @@ Wymagane są kontenery z repozytorium serwera, migracje
 ```bash
 docker compose up -d db
 scripts/apply-migrations.sh
-docker compose -f compose.yaml -f compose.local.yaml up -d api
+OPERATIONS_V2_WRITE_MODE=all docker compose -f compose.yaml -f compose.local.yaml up -d api
 python3 scripts/smoke-local-api.py
 ```
+
+Test wymaga wszystkich aktualnych migracji, w tym 0016. Jawny tryb `all`
+jest przeznaczony tylko dla tej odizolowanej bazy. Produkcyjna konfiguracja
+pozostaje domyślnie `disabled`; canary i rollout wymagają osobnej aktywacji.
 
 Smoke test używa prawdziwego HTTP i PostgreSQL: rejestruje tymczasowe
 konto, zapisuje notebook, sprawdza niedozwolone udostępnienie,

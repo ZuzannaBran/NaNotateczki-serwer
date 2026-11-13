@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.routers import operations
+from app import operation_rollout
 from app.settings import Settings
 
 
@@ -31,7 +31,7 @@ def test_v2_writes_require_explicit_rollout(monkeypatch, mode, canaries, allowed
     else:
         ids = ""
     monkeypatch.setattr(
-        operations,
+        operation_rollout,
         "get_settings",
         lambda: SimpleNamespace(
             operations_v2_write_mode=mode,
@@ -39,14 +39,14 @@ def test_v2_writes_require_explicit_rollout(monkeypatch, mode, canaries, allowed
         ),
     )
     if allowed:
-        operations.require_operations_v2_write(owner_id)
+        operation_rollout.require_operations_v2_write(owner_id)
     else:
         with pytest.raises(HTTPException) as error:
-            operations.require_operations_v2_write(owner_id)
+            operation_rollout.require_operations_v2_write(owner_id)
         assert error.value.status_code == 403
 
 
-def test_v2_rollout_is_enabled_by_default(monkeypatch):
+def test_v2_rollout_requires_explicit_configuration(monkeypatch):
     monkeypatch.delenv("OPERATIONS_V2_WRITE_MODE", raising=False)
     monkeypatch.delenv("OPERATIONS_V2_CANARY_OWNER_IDS", raising=False)
     settings = Settings(
@@ -54,7 +54,7 @@ def test_v2_rollout_is_enabled_by_default(monkeypatch):
         APP_ORIGIN="https://app.example.test",
         JWT_SECRET="a" * 64,
     )
-    assert settings.operations_v2_write_mode == "all"
+    assert settings.operations_v2_write_mode == "disabled"
 
 
 def test_canary_uuid_configuration_must_be_valid(monkeypatch):

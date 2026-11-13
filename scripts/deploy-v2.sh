@@ -7,8 +7,7 @@ if [[ $# -ne 0 || ! -f .env ]]; then
   echo 'Run with no arguments from a configured server checkout (.env required).' >&2
   exit 64
 fi
-# Override a stale pre-v2 mode from .env for this deployment.
-export OPERATIONS_V2_WRITE_MODE=all
+# Compose keeps the configured disabled/canary/all mode, including .env.
 docker compose build api
 docker compose up -d --wait db
 docker compose stop api

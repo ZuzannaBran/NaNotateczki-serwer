@@ -23,6 +23,7 @@ from ..models import (
 )
 from ..asset_store import asset_path, valid_verified_file
 from ..operation_ordering import precedence
+from ..operation_rollout import require_operations_v2_write
 from ..operation_projection import (
     ProjectionError, apply_operation, page_move_tombstones,
 )
@@ -399,23 +400,6 @@ async def apply_one(
     await session.flush()
     return {"operationId": op.operation_id, "cursor": row.cursor,
             "status": "applied"}
-
-
-def require_operations_v2_write(owner_id: uuid.UUID) -> None:
-    """Fail closed until an account is explicitly enabled for v2 writes."""
-    settings = get_settings()
-    mode = settings.operations_v2_write_mode
-    if mode == "all":
-        return
-    if mode == "canary" and str(owner_id) in (
-        settings.operations_v2_canary_owner_ids.split(",")
-    ):
-        return
-    raise HTTPException(
-        status_code=403,
-        detail="Operation sync v2 is not enabled for this account.",
-    )
-
 
 
 @router.get("/activation/readiness")

@@ -118,6 +118,7 @@ def test_activation_readiness_rejects_v1_and_unconverted_v2():
 
 def test_activation_endpoint_requires_marker_and_canary_allowlist(monkeypatch):
     from types import SimpleNamespace
+    from app import operation_rollout
     from app.routers import operations
 
     owner = uuid.uuid4()
@@ -132,7 +133,7 @@ def test_activation_endpoint_requires_marker_and_canary_allowlist(monkeypatch):
             operations_v2_write_mode="canary",
             operations_v2_canary_owner_ids=str(allowed),
         )
-    monkeypatch.setattr(operations, "get_settings", lambda: config(owner))
+    monkeypatch.setattr(operation_rollout, "get_settings", lambda: config(owner))
 
     def check(session):
         return asyncio.run(operations.get_activation_readiness(
@@ -147,7 +148,7 @@ def test_activation_endpoint_requires_marker_and_canary_allowlist(monkeypatch):
             check(session)
         assert error.value.status_code == 409
     monkeypatch.setattr(
-        operations, "get_settings", lambda: config(uuid.uuid4()),
+        operation_rollout, "get_settings", lambda: config(uuid.uuid4()),
     )
     with pytest.raises(HTTPException) as error:
         check(ReadinessSession("v2"))

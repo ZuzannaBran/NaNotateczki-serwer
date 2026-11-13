@@ -6,12 +6,20 @@
 kasowania danych. Zatrzymuje API na czas migracji, uruchamia je i sprawdza
 `/ready`. Uruchamiaj z aktualnego `main`, z zachowaniem istniejącego `.env`.
 
-Migracja 0016 włącza v2 dla nowych i pustych kont. Starsza konfiguracja
-`OPERATIONS_V2_WRITE_MODE=disabled` nadal pauzuje zapis, jeśli ktoś
-uruchomi Compose poza tym skryptem. Do normalnej pracy ustaw
-`OPERATIONS_V2_WRITE_MODE=all` w `.env`. Konto z zachowaną historią
+Migracja 0016 przypisuje protokół v2 nowym i pustym kontom. Zapis jest
+domyślnie wstrzymany (`OPERATIONS_V2_WRITE_MODE=disabled`). Skrypt wdrożenia
+zachowuje wybrany tryb z konfiguracji Compose i nie rozszerza canary na
+wszystkie konta. Pierwszy test wymaga `OPERATIONS_V2_WRITE_MODE=canary`
+oraz UUID konta w `OPERATIONS_V2_CANARY_OWNER_IDS` w `.env`.
+`OPERATIONS_V2_WRITE_MODE=all` ustaw dopiero po akceptacji canary,
+backup/restore i testów dwóch klientów. Konto z zachowaną historią
 wymaga konwersji albo jawnego resetu **konta testowego**.
 Po wdrożeniu użyj nowej wersji Flutter, bez flagi aktywacji.
+
+Bramka canary obejmuje również ustawienia konta, tworzenie/upload/finalizację
+backupu oraz tworzenie, dołączanie, przedłużanie i wygląd Share. Sam marker
+v2 nie omija listy aktywowanych kont. Odczyt danych i odwołanie Share
+pozostają możliwe przy wstrzymanym zapisie.
 
 Dokumenty, Share, backup, planer i ustawienia używają adresów `/v2`.
 Logowanie `/v1/auth`, diagnostyka i zegar pozostają odrębnym API.
@@ -35,10 +43,13 @@ Bez domeny można uruchomić API tylko na `127.0.0.1:18080`:
 ```bash
 docker compose up -d db
 scripts/apply-migrations.sh
-docker compose -f compose.yaml -f compose.local.yaml up -d api
+OPERATIONS_V2_WRITE_MODE=all docker compose -f compose.yaml -f compose.local.yaml up -d api
 curl http://127.0.0.1:18080/ready
 python3 scripts/smoke-local-api.py
 ```
+
+Jawne `all` w tym przykładzie dotyczy wyłącznie odizolowanego środowiska
+testowego. Nie używaj go do aktywacji produkcji przed zaliczeniem canary.
 
 Na innym komputerze port można udostępnić sobie przez tunel SSH:
 `ssh -L 18080:127.0.0.1:18080 UZYTKOWNIK@SERWER`. Flutter Web uruchomiony
