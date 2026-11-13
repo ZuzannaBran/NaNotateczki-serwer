@@ -1,2 +1,1 @@
-Pakiet 11 - pełna weryfikacja V2
-Wycofanie zapisów V1, rejestracja i migracja 0016, Share, backup, planner, dwa procesy Flutter.
+2026-11-13: verify projection parity, deletion rebase and fresh-server reset

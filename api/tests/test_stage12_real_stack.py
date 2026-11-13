@@ -771,6 +771,49 @@ def test_socket_reconnect_recovers_missed_feed(client):
     assert set(state["objects"]) == {"offline-1", "offline-2"}
 
 
+def test_source_page_delete_before_move_reserves_child_uid(client):
+    _, token = identity()
+    document, source, _, seed = initial_document(client, token)
+    destination = "survives-" + uuid.uuid4().hex
+    creator = Actor(document, "source-create-" + uuid.uuid4().hex, clock=2)
+    page = creator.next(
+        "page.create", target=destination, payload={"value": {"name": "Next"}},
+        after=[seed["operationId"]],
+    )
+    submit(client, token, [page])
+    uid = "source-ink-" + uuid.uuid4().hex
+    created = creator.next(
+        "stroke.create", target=uid, page=source, payload={"value": {"x": 2}},
+    )
+    submit(client, token, [created])
+    mover = Actor(document, "source-move-" + uuid.uuid4().hex, clock=5)
+    move = mover.next(
+        "object.move", target=uid, page=source,
+        payload={"toPageId": destination, "sortIndex": 0},
+        after=[created["operationId"]],
+    )
+    deleter = Actor(document, "source-delete-" + uuid.uuid4().hex, clock=5)
+    deletion = deleter.next(
+        "page.delete", target=source, payload={}, after=[created["operationId"]],
+    )
+    submit(client, token, [deletion])
+    submit(client, token, [move])
+    edit = mover.next(
+        "object.set", target=uid, page=destination,
+        payload={"properties": {"x": 99}},
+    )
+    submit(client, token, [edit])
+    state = snapshot(client, token, document)["state"]
+    assert source not in state["pages"]
+    assert state["pages"][destination]["objects"] == {}
+    creator.clock = edit["logicalClock"]
+    recycled = creator.next(
+        "stroke.create", target=uid, page=destination,
+        payload={"value": {"x": 7}}, after=[edit["operationId"]],
+    )
+    submit(client, token, [recycled], status=422)
+
+
 def test_stale_page_delete_after_move_removes_visible_object(client):
     _, token = identity()
     document, source, _, seed = initial_document(client, token)

@@ -5,7 +5,7 @@ from itertools import permutations
 import pytest
 
 from app.operation_projection import (
-    ProjectionError, apply_operation, ordered_objects,
+    ProjectionError, apply_operation, ordered_objects, page_move_tombstones,
 )
 from app.operation_protocol import OperationEnvelope
 
@@ -48,6 +48,23 @@ def seeded():
     state = apply(None, op(1, "document.create"), deleted)
     state = apply(state, op(2, "page.create", target="p"), deleted)
     return state, deleted
+
+
+def test_page_deletion_reserves_children_before_offline_move_arrives():
+    state, deleted = seeded()
+    state = apply(state, op(3, "page.create", target="q"), deleted)
+    state = apply(state, op(4, "stroke.create", page="p", target="ink"), deleted)
+    deletion = op(5, "page.delete", target="p")
+    children = page_move_tombstones(state, deletion)
+    assert children == {("object", "p", "ink")}
+    state = apply(state, deletion, deleted)
+    deleted.update(children)
+    state = apply(state, op(6, "object.move", page="p", target="ink",
+                            props={"toPageId": "q", "sortIndex": 1}), deleted)
+    state = apply(state, op(7, "object.set", page="q", target="ink"), deleted)
+    assert state["pages"]["q"]["objects"] == {}
+    with pytest.raises(ProjectionError, match="deleted"):
+        apply(state, op(8, "stroke.create", page="q", target="ink"), deleted)
 
 
 def test_independent_creates_and_delete_never_resurrect():

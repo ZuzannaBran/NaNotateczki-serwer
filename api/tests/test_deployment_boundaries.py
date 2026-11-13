@@ -4,6 +4,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_postgres_health_waits_for_tcp_after_temporary_init_server():
+    # The image's temporary init server accepts Unix sockets, then stops.
+    # A socket-only probe can release migrations during that shutdown.
+    for filename in ("compose.yaml", "compose.stage12.yaml"):
+        assert "pg_isready -h 127.0.0.1 " in (ROOT / filename).read_text()
+
+
 def test_compose_does_not_publish_database_or_api_ports() -> None:
     compose = (ROOT / "compose.yaml").read_text()
 

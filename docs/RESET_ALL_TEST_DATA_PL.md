@@ -10,11 +10,23 @@ git pull --ff-only origin main
 bash scripts/reset-all-test-data.sh --delete-all-test-data
 ```
 
-Skrypt usuwa wolumen PostgreSQL przez `docker compose down --volumes`, czyści katalog bind `data/`, tworzy pustą bazę i ponownie nakłada wszystkie migracje SQL, a następnie uruchamia Compose. W przypadku błędu zatrzymuje się bez uruchamiania starego API na częściowo skasowanych danych.
+Skrypt najpierw buduje aktualne API. Następnie usuwa wolumen PostgreSQL
+przez `docker compose down --volumes` oraz zawartość `data/` i `backups/`
+(także administracyjne dumpy, które mogą zawierać hasła i dokumenty).
+Tworzy pustą bazę, nakłada wszystkie migracje SQL i sprawdza, że każda
+tabela poza `schema_migrations` jest pusta, zanim uruchomi API.
+Istniejący tunel `cloudflared` zatrzymuje i odtwarza razem z usługami
+z `compose.public.yaml`. Błąd budowania albo wykrywania usług nie usuwa
+danych. Błąd migracji nie uruchamia starego API na częściowej bazie.
 
 Ponieważ znikają również wszystkie konta, trzeba zarejestrować nowe. W razie wyłączonej rejestracji administrator musi tymczasowo ustawić `ALLOW_REGISTRATION=true` w `.env` i odtworzyć kontenery API.
 
-Stare SQLite/IndexedDB i lokalne outboxy na komputerach oraz telefonach NIE są dostępne z serwera i muszą być wyczyszczone oddzielnie. Reset danych nie uruchamia produkcyjnie Flutter SyncEngine v2: nowe konta bez markera nadal korzystają z v1.
+Stare SQLite/IndexedDB i lokalne outboxy na komputerach oraz telefonach
+NIE są dostępne z serwera i muszą być wyczyszczone oddzielnie.
+Aktualna migracja 0016 nadaje nowym kontom marker v2; dawnych writerów
+dokumentów API już nie routuje. Reset zachowuje skonfigurowany tryb
+`OPERATIONS_V2_WRITE_MODE` — nie wymusza `all` i nie zastępuje akceptacji
+aplikacji. Klient musi pochodzić z odpowiadającej wersji `NaNotateczki/dev`.
 
 Regresje uruchamiane lokalnie bez prawdziwego Dockera:
 

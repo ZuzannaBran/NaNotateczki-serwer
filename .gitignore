@@ -1,5 +1,6 @@
 # Separate application checkout
 /code/
+/.reset-public-tunnel
 
 # Secrets and local environment (keep safe configuration examples)
 .env

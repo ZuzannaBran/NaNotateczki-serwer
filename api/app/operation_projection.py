@@ -162,14 +162,17 @@ def _remember_asset_receipt(
 
 
 def page_move_tombstones(current: dict | None, operation: OperationEnvelope):
-    """The page tombstone also covers UIDs actually moved into that page."""
+    """Reserve every deleted child UID, including later cross-page edits.
+
+    The historical function name is retained for callers. A child that has
+    not moved yet must also remain deleted if an offline move arrives later.
+    """
     if current is None or operation.kind != "page.delete":
         return set()
     page = current.get("pages", {}).get(operation.object_id, {})
     return {
         ("object", operation.object_id, uid)
-        for uid, obj in page.get("objects", {}).items()
-        if obj.get("lastMove") is not None
+        for uid in page.get("objects", {})
     }
 
 
