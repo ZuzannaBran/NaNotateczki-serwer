@@ -39,6 +39,14 @@ class Stage12RunnerUsernameTest(unittest.TestCase):
         self.assertIn("NN_STAGE12_ACCESS_TOKEN", source)
         self.assertNotIn("export ALLOW_REGISTRATION=true", source)
 
+    def test_flutter_peers_run_as_two_waited_processes(self):
+        source = RUNNER.read_text()
+        self.assertIn("run_peer a &", source)
+        self.assertIn("run_peer b &", source)
+        self.assertIn('wait "$peer_a" || failed=1', source)
+        self.assertIn('wait "$peer_b" || failed=1', source)
+        self.assertIn("test/stage12_two_process_live_test.dart", source)
+
 
 if __name__ == "__main__":
     unittest.main()

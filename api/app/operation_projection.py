@@ -161,6 +161,18 @@ def _remember_asset_receipt(
     current.setdefault("assetReceipts", {})[asset_id] = dict(receipt)
 
 
+def page_move_tombstones(current: dict | None, operation: OperationEnvelope):
+    """The page tombstone also covers UIDs actually moved into that page."""
+    if current is None or operation.kind != "page.delete":
+        return set()
+    page = current.get("pages", {}).get(operation.object_id, {})
+    return {
+        ("object", operation.object_id, uid)
+        for uid, obj in page.get("objects", {}).items()
+        if obj.get("lastMove") is not None
+    }
+
+
 def apply_operation(
     current: dict | None,
     op: OperationEnvelope,
@@ -419,11 +431,6 @@ def apply_operation(
             if rank <= previous["rank"]:
                 # A losing operation must not resurrect a removed destination.
                 return current, None
-        destination_page = pages.get(destination_id)
-        if destination_page is None or (
-            "page", "", destination_id
-        ) in tombstones:
-            raise ProjectionError("Destination page does not exist.")
         if actual_source != op.page_id:
             if (
                 previous is None
@@ -431,6 +438,14 @@ def apply_operation(
                 or previous["operationId"] in op.dependencies
             ):
                 raise ProjectionError("Causal move source is inconsistent.")
+        if ("page", "", destination_id) in tombstones:
+            # Deleting a destination wins in either delivery order. Keep
+            # the original move in the journal and never reuse the UID.
+            pages[actual_source]["objects"].pop(op.object_id)
+            return current, ("object", destination_id, op.object_id)
+        destination_page = pages.get(destination_id)
+        if destination_page is None:
+            raise ProjectionError("Destination page does not exist.")
         if ("object", destination_id, op.object_id or "") in tombstones:
             raise ProjectionError("Destination identity was deleted.")
         destination_objects = destination_page.get("objects", {})

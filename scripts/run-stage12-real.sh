@@ -150,8 +150,33 @@ print(token)
 PY
   )"
   flutter_device="${NN_STAGE12_DEVICE_ID:-linux}"
-  (cd "$flutter_root" && flutter pub get && flutter test -d "$flutter_device" \
-    --dart-define="NN_STAGE12_API_URL=http://127.0.0.1:$http_port" \
-    --dart-define="NN_STAGE12_ACCESS_TOKEN=$test_access_token" \
-    integration_test/stage12_live_api_test.dart)
+  (
+    cd "$flutter_root"
+    flutter pub get
+    define=(
+      --dart-define="NN_STAGE12_API_URL=http://127.0.0.1:$http_port"
+      --dart-define="NN_STAGE12_ACCESS_TOKEN=$test_access_token"
+    )
+    flutter test -d "$flutter_device" "${define[@]}" \
+      integration_test/stage12_live_api_test.dart
+
+    # These peers have independent Flutter processes and persistent SQLite
+    # files. Only test barriers and the new notebook's UID cross this folder.
+    mkdir "$work/flutter-peers"
+    run_peer() {
+      flutter test --no-pub --reporter expanded "${define[@]}" \
+        --dart-define="NN_STAGE12_PROCESS_DIRECTORY=$work/flutter-peers" \
+        --dart-define="NN_STAGE12_PROCESS_ROLE=$1" \
+        test/stage12_two_process_live_test.dart >"$work/peer-$1.log" 2>&1
+    }
+    run_peer a &
+    peer_a=$!
+    run_peer b &
+    peer_b=$!
+    failed=0
+    wait "$peer_a" || failed=1
+    wait "$peer_b" || failed=1
+    cat "$work/peer-a.log" "$work/peer-b.log"
+    [[ "$failed" == 0 ]]
+  )
 fi

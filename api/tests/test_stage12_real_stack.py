@@ -947,3 +947,41 @@ def test_image_create_and_verified_attachment_commit_as_one_batch(client):
     accepted = client.post(endpoint, headers=auth, json={"operations": [create, attach]})
     assert accepted.status_code == 200, accepted.text
     assert [item["status"] for item in accepted.json()["acknowledgements"]] == ["applied"] * 2
+
+
+@pytest.mark.parametrize("move_first", [False, True])
+def test_move_and_destination_delete_keep_receipts_without_reviving_uid(
+    client, move_first,
+):
+    _, token = identity()
+    document, source, _, created_page = initial_document(client, token)
+    seed = Actor(document, "seed-destination", clock=10)
+    destination = "destination-page"
+    added = seed.next("page.create", target=destination,
+                      payload={"value": {"title": "Destination"}},
+                      after=[created_page["operationId"]])
+    ink = seed.next("stroke.create", page=source, target="moving-ink",
+                    payload={"value": {"objectType": "stroke"}})
+    submit(client, token, [added, ink])
+    move = Actor(document, "offline-mover", clock=20).next(
+        "object.move", page=source, target="moving-ink",
+        payload={"toPageId": destination, "sortIndex": 1},
+        after=[ink["operationId"]],
+    )
+    delete = Actor(document, "offline-deleter", clock=21).next(
+        "page.delete", target=destination, payload={},
+        after=[added["operationId"]],
+    )
+    for operation in ([move, delete] if move_first else [delete, move]):
+        submit(client, token, [operation])
+    assert submit(client, token, [move])["acknowledgements"][0]["status"] == "duplicate"
+    pages = snapshot(client, token, document)["state"]["pages"]
+    assert list(pages) == [source]
+    assert pages[source]["objects"] == {}
+    stale = Actor(document, "stale-reuse", clock=30).next(
+        "stroke.create", page=source, target="moving-ink",
+        payload={"value": {"objectType": "stroke"}},
+    )
+    submit(client, token, [stale], status=422)
+    assert [row["operation"] for row in feed(client, token) if
+            row["operation"]["operationId"] == move["operationId"]] == [move]

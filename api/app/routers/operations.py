@@ -23,7 +23,9 @@ from ..models import (
 )
 from ..asset_store import asset_path, valid_verified_file
 from ..operation_ordering import precedence
-from ..operation_projection import ProjectionError, apply_operation
+from ..operation_projection import (
+    ProjectionError, apply_operation, page_move_tombstones,
+)
 from ..operation_protocol import (
     InvalidOperation, LIBRARY_DOCUMENT_ID, MAX_SAFE_INTEGER,
     OperationEnvelope,
@@ -339,6 +341,7 @@ async def apply_one(
                 )
             ):
                 verified = frozenset({digest})
+    extra_tombstones = page_move_tombstones(before, op)
     try:
         projected, tombstone = apply_operation(
             before, op, tombstones, verified_assets=verified,
@@ -374,7 +377,8 @@ async def apply_one(
         state.updated_at = now
 
     if tombstone is not None:
-        target_kind, page_id, object_id = tombstone
+        extra_tombstones.add(tombstone)
+    for target_kind, page_id, object_id in sorted(extra_tombstones - tombstones):
         session.add(ObjectTombstone(
             owner_id=owner_id, document_uid=op.document_id,
             target_kind=target_kind, page_id=page_id, object_id=object_id,
