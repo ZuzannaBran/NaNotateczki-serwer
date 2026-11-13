@@ -44,10 +44,10 @@ class UploadRequest:
 
 @pytest.fixture
 def bypass_v2_protocol(monkeypatch):
-    async def confirmed_protocol(session, user_id, *, v2):
-        assert v2
+    async def confirmed_protocol(session, user_id):
+        return None
 
-    monkeypatch.setattr(backups, "_require_backup_protocol", confirmed_protocol)
+    monkeypatch.setattr(backups, "require_v2_protocol", confirmed_protocol)
 
 
 def test_interrupted_upload_leaves_no_final_or_partial_file(
@@ -63,9 +63,9 @@ def test_interrupted_upload_leaves_no_final_or_partial_file(
     user = SimpleNamespace(id=record.owner_id)
 
     with pytest.raises(HTTPException) as raised:
-        asyncio.run(backups._upload_content(
+        asyncio.run(backups.upload_v2_content(
             record.id, UploadRequest([raw[:10]]), record.sha256,
-            user, session, v2=True,
+            user, session,
         ))
     assert raised.value.status_code == 422
     target = tmp_path / record.storage_key
@@ -91,7 +91,7 @@ def test_corrupt_v2_finalize_rejects_file_without_publishing_it(
     user = SimpleNamespace(id=record.owner_id)
 
     with pytest.raises(HTTPException) as raised:
-        asyncio.run(backups._finalize_backup(record.id, user, session, v2=True))
+        asyncio.run(backups._finalize_backup(record.id, user, session))
     assert raised.value.status_code == 422
     assert record.status == "rejected"
     assert session.commits == 1
@@ -116,7 +116,7 @@ def test_verified_archive_is_published_atomically(
     user = SimpleNamespace(id=record.owner_id)
 
     result = asyncio.run(
-        backups._finalize_backup(record.id, user, session, v2=True)
+        backups._finalize_backup(record.id, user, session)
     )
     assert result["status"] == "verified"
     assert result["sha256"] == record.sha256

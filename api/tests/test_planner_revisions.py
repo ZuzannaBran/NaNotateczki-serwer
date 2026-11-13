@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app.database import database_session
 from app.main import app
 from app.models import PlannerEntry, PlannerEntryMutation, User
-from app.routers import planner, planner_v2
+from app.routers import planner_v2
 from app.security import current_user
 from app.settings import get_settings
 
@@ -62,12 +62,10 @@ def environment(monkeypatch):
     async def noop(*args):
         return None
 
-    monkeypatch.setattr(planner, "lock_owner_events", noop)
     monkeypatch.setattr(planner_v2, "lock_owner_events", noop)
     monkeypatch.setattr(
         planner_v2, "require_operations_v2_write", lambda owner: None,
     )
-    monkeypatch.setattr(planner.hub, "publish", noop)
     monkeypatch.setattr(planner_v2.hub, "publish", noop)
     try:
         with TestClient(app) as client:

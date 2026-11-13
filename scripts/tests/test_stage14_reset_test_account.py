@@ -95,10 +95,10 @@ class ResetTestAccountTest(unittest.TestCase):
         result = self.run_reset(MOCK_BAD_RECEIPT="1")
         self.assertEqual(result.returncode, 75)
 
-    def test_success_reminds_operator_client_is_not_v2_yet(self):
+    def test_success_reports_v2_write_mode(self):
         result = self.run_reset()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("current Flutter application", result.stdout)
+        self.assertIn("OPERATIONS_V2_WRITE_MODE=all", result.stdout)
         self.assertIn("all existing tokens invalidated", result.stdout)
 
     def test_sql_is_single_owner_scoped_and_transactional(self):

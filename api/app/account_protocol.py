@@ -1,8 +1,7 @@
-"""Persistent account-wide v1/v2 write fence.
+"""Persisted readiness for the only live account writer, sync v2.
 
-An account without a marker is legacy v1. A marker is created only by the
-offline administrative canary procedure, never by a normal API request.
-Both writers check it while holding the existing per-owner transaction lock.
+Absent markers identify archived accounts that still need offline conversion.
+Fresh accounts get a marker in the PostgreSQL insertion transaction.
 """
 import uuid
 
@@ -19,18 +18,8 @@ async def account_protocol(session: AsyncSession, owner_id: uuid.UUID) -> str:
         ),
         {"owner_id": owner_id},
     )
-    # No row means v1; the SQL migration leaves every account on v1.
+    # Keep the historical mode label for the offline importer and old clients.
     return result.scalar_one_or_none() or "v1"
-
-
-async def require_legacy_protocol(
-    session: AsyncSession, owner_id: uuid.UUID,
-) -> None:
-    if await account_protocol(session, owner_id) != "v1":
-        raise HTTPException(
-            status_code=409,
-            detail="Account uses operation API v2; update the client.",
-        )
 
 
 async def require_v2_protocol(

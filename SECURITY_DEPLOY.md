@@ -10,7 +10,7 @@ Przed wdrożeniem wykonaj kopię PostgreSQL i data/backups na odrębny nośnik.
 5. Uruchom: docker compose -f compose.yaml -f compose.public.yaml up -d --build
 6. Sprawdź: docker compose -f compose.yaml -f compose.public.yaml ps
 7. Sprawdź HTTPS: curl -i https://api.nanotateczki.pl/health
-8. Testuj /v1/backups i /v1/sync/bootstrap bez tokenu: oczekuj HTTP 401.
+8. Testuj /v2/backups i /v2/operations bez tokenu: oczekuj HTTP 401.
 9. W przeglądarce sprawdź logowanie, import PDF, backup, restore i WebSocket.
 
 Cloudflare Tunnel musi kierować API oraz aplikację na http://caddy:8080.

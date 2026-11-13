@@ -30,7 +30,7 @@ from .operation_protocol import MAX_SAFE_INTEGER
 from .routers.operations import (
     Principal, apply_one, ensure_projection_budget, require_operations_v2_write,
 )
-from .routers.sync import lock_owner_events
+from .owner_lock import lock_owner_events
 from .settings import get_settings
 
 

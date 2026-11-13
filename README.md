@@ -1,5 +1,23 @@
 # NaNotateczki backend
 
+## Uruchomienie po pakiecie 11
+
+`bash scripts/deploy-v2.sh` aktualizuje istniejący projekt Compose bez
+kasowania danych. Zatrzymuje API na czas migracji, uruchamia je i sprawdza
+`/ready`. Uruchamiaj z aktualnego `main`, z zachowaniem istniejącego `.env`.
+
+Migracja 0016 włącza v2 dla nowych i pustych kont. Starsza konfiguracja
+`OPERATIONS_V2_WRITE_MODE=disabled` nadal pauzuje zapis, jeśli ktoś
+uruchomi Compose poza tym skryptem. Do normalnej pracy ustaw
+`OPERATIONS_V2_WRITE_MODE=all` w `.env`. Konto z zachowaną historią
+wymaga konwersji albo jawnego resetu **konta testowego**.
+Po wdrożeniu użyj nowej wersji Flutter, bez flagi aktywacji.
+
+Dokumenty, Share, backup, planer i ustawienia używają adresów `/v2`.
+Logowanie `/v1/auth`, diagnostyka i zegar pozostają odrębnym API.
+Adresy zapisu v1 opisane niżej mają wyłącznie znaczenie historyczne.
+
+
 Źródłem prawdy dla backendu jest repozytorium
 `ZuzannaBran/NaNotateczki-serwer`, gałąź `main`.
 Katalog `NaNotateczki/server/` w repo aplikacji jest zgodnościowym lustrem
@@ -260,21 +278,18 @@ Po utracie połączenia klient pobiera pełny stan serwera i uzgadnia go
 z trwałymi lokalnymi zmianami offline.
 
 
-## Etap 14 — reset danych konta testowego do v2
+## Etap 14 — opcjonalny reset historycznego konta testowego
 
 Jeśli wszystkie dane konkretnego konta są przeznaczone do usunięcia,
 użyj po backupie i zatrzymaniu API zabezpieczonego skryptu
 `scripts/stage14-reset-test-account-v2.sh` z UUID, nazwą i jawnym
 potwierdzeniem `WIPE-UUID`. Podczas jednej transakcji czyści stan v1,
 sesje i kolejki tego konta oraz wstawia marker v2. Nie usuwa innych kont.
-Zapisy v1 ustawień, kalendarza, Share i backupów zostały także objęte
-blokadą protokołu, aby starsze urządzenia nie odtworzyły stanu po resecie.
-**Uwaga:** obecny interfejs Flutter nadal używa v1; skrypt pozwala
-testować v2 przez API, ale sam nie migruje edytora. Nie resetuj normalnego
-konta przed migracją klienta. Szczegóły:
+Po migracji 0016 stare endpointy zapisu nie działają. Puste konta
+uzyskują marker automatycznie i nie wymagają resetu. Szczegóły:
 [docs/STAGE14_TEST_RESET_PL.md](docs/STAGE14_TEST_RESET_PL.md).
 
-## Etap 14 — audyt wycofania legacy (bez usuwania v1)
+## Etap 14 — audyt zachowanych danych historycznych
 
 Po wdrożeniu migracji 0013 można wykonać odczytowy audyt:
 
@@ -286,8 +301,5 @@ python3 -m unittest discover -s scripts/tests -p 'test_stage14_retirement_audit.
 Audyt raportuje liczbę kont i dokumentów v1, aktywnych sesji Share v1,
 podwójnych UID oraz niepoprawnych checkpointów. Działa w transakcji
 PostgreSQL READ ONLY, niczego nie przełącza i przy blokadzie zwraca kod 75.
-Nawet kod 0 nie zezwala na wyłączenie v1: nowe konta nadal używają v1,
-a migracja istniejących kont, outbox urządzeń i testy E2E są otwarte.
-Warunki bezpiecznej finalizacji opisano w aplikacji:
-docs/ETAP_14_FINALIZACJA.md (gałąź dev).
-Nie usuwać starszych routerów ani archiwalnych adapterów recovery.
+Wynik opisuje zachowane dane, nie dostępność starego protokołu zapisu.
+Nie usuwaj archiwalnych tabel, jeżeli konto wymaga konwersji.

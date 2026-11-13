@@ -69,13 +69,15 @@ BEGIN
       'study_shares', 'account_settings', 'planner_entries',
       'planner_entry_mutations', 'document_states',
       'document_operations', 'actor_checkpoints', 'object_tombstones',
-      'account_sync_protocol'
+      'account_sync_protocol', 'verified_assets', 'legacy_account_cutovers'
     );
   IF unknown_tables IS NOT NULL THEN
     RAISE EXCEPTION 'Unknown account tables: %', unknown_tables;
   END IF;
 
   -- Children before parents; FK cascades handle share grants.
+  DELETE FROM verified_assets WHERE owner_id = target;
+  DELETE FROM legacy_account_cutovers WHERE owner_id = target;
   DELETE FROM object_tombstones WHERE owner_id = target;
   DELETE FROM actor_checkpoints WHERE owner_id = target;
   DELETE FROM document_operations WHERE owner_id = target;
@@ -113,5 +115,4 @@ echo "Reset and activated one account: $owner_id (v2)."
 echo "Password hash and username unchanged; all existing tokens invalidated."
 echo "Old backup files remain on disk but have no database entries."
 echo "Clear this account's legacy client databases/outboxes before reconnecting."
-echo "Set OPERATIONS_V2_WRITE_MODE=canary and whitelist this UUID."
-echo "The current Flutter application is NOT yet a complete v2 client."
+echo "Start the v2 API with OPERATIONS_V2_WRITE_MODE=all."

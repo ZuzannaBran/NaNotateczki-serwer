@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import DeviceBackup
-from app.routers.backups import list_backups, original_payload_json, validate_envelope
+from app.routers.backups import list_v2_backups, original_payload_json, validate_envelope
 
 
 def compact_sha256(value: object) -> str:
@@ -204,14 +204,16 @@ def test_latest_backups_are_sorted_by_verification_time() -> None:
             return []
 
     class InspectSession:
-        async def execute(self, statement):
+        async def execute(self, statement, parameters=None):
+            if parameters is not None:
+                return SimpleNamespace(scalar_one_or_none=lambda: "v2")
             sql = str(statement)
             assert "verified_at DESC" in sql
             assert sql.index("verified_at DESC") < sql.index("created_at DESC")
             return EmptyResult()
 
     result = asyncio.run(
-        list_backups(
+        list_v2_backups(
             user=SimpleNamespace(id=uuid.uuid4()),
             session=InspectSession(),
         )

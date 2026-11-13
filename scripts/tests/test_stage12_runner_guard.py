@@ -34,7 +34,7 @@ class Stage12RunnerUsernameTest(unittest.TestCase):
 
     def test_fixture_requires_disposable_account_protocol_marker(self):
         source = RUNNER.read_text()
-        self.assertIn("INSERT INTO account_sync_protocol", source)
+        self.assertIn("Fresh Stage 12 identity did not get the v2 marker", source)
         self.assertIn("nanotateczki_stage12_test", source)
         self.assertIn("NN_STAGE12_ACCESS_TOKEN", source)
         self.assertNotIn("export ALLOW_REGISTRATION=true", source)

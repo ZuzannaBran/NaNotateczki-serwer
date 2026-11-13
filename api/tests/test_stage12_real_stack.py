@@ -76,13 +76,10 @@ def identity(*, v2=True):
         id=owner_id, username="stage12_" + owner_id.hex[:16],
         password_hash="stage12-test-only-not-a-login",
     )
-    # New accounts start in v1 unless this disposable fixture opts into v2.
-    if v2:
-        sql(
-            "INSERT INTO account_sync_protocol (owner_id, protocol) "
-            "VALUES (:owner_id, 'v2')",
-            owner_id=owner_id,
-        )
+    # Historical fixtures simulate rows restored from a pre-retirement DB.
+    if not v2:
+        sql("DELETE FROM account_sync_protocol WHERE owner_id = :owner_id",
+            owner_id=owner_id)
     token, _ = create_access_token(owner_id, 1)
     return owner_id, token
 
@@ -335,8 +332,7 @@ def test_persistent_protocol_fence_rejects_cross_writers(client):
         headers={**headers(v2_token), "Idempotency-Key": uuid.uuid4().hex},
         json={"expectedRevision": 0, "notebook": old_notebook},
     )
-    assert response.status_code == 409, response.text
-    assert "operation API v2" in str(response.json())
+    assert response.status_code == 404, response.text
 
 
 def test_v2_planner_and_backup_use_activated_account(client):
@@ -421,27 +417,66 @@ def test_v2_planner_and_backup_use_activated_account(client):
                       headers=headers(other)).status_code == 404
 
 
-def test_legacy_tombstones_keep_sql_null_content(client):
-    _, token = identity(v2=False)
-    uid = "legacy-delete-" + uuid.uuid4().hex
-    url = f"/v1/sync/notebooks/{uid}"
-    created = client.put(url, headers={
-        **headers(token), "Idempotency-Key": uuid.uuid4().hex,
-    }, json={"expectedRevision": 0, "notebook": {
-        "uid": uid, "title": "Legacy", "kind": 0, "folder": "",
-        "createdAt": "2026-11-13T11:00:00Z",
-        "updatedAt": "2026-11-13T11:00:00Z", "pages": [],
-    }})
-    assert created.status_code == 200, created.text
-    deleted = client.request("DELETE", url, headers={
-        **headers(token), "Idempotency-Key": uuid.uuid4().hex,
-    }, json={"expectedRevision": created.json()["revision"]})
-    assert deleted.status_code == 200, deleted.text
-    changes = client.get("/v1/sync/changes?after=0", headers=headers(token))
-    assert changes.status_code == 200, changes.text
-    tombstone = changes.json()["changes"][-1]
-    assert tombstone["uid"] == uid and tombstone["deleted"] is True
-    assert tombstone["notebook"] is None
+def test_empty_account_activates_and_api_role_cannot_write_snapshot_history(client):
+    owner, token = identity()
+    auth = headers(token)
+    assert client.get("/v2/activation/readiness", headers=auth).json() == {
+        "protocol": "v2", "writeEnabled": True, "version": 1,
+    }
+    document, _, _, _ = initial_document(client, token)
+    assert snapshot(client, token, document)["state"]["properties"]["title"] == "Stage 12"
+    assert client.put(
+        f"/v1/sync/notebooks/{document}", headers=auth, json={},
+    ).status_code == 404
+
+    async def assert_read_only():
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        try:
+            async with engine.connect() as connection:
+                for table in ("synced_notebooks", "change_events", "idempotency_records"):
+                    for permission in ("INSERT", "UPDATE", "DELETE"):
+                        assert not await connection.scalar(text(
+                            "SELECT has_table_privilege(current_user, :table, :permission)"
+                        ), {"table": table, "permission": permission})
+                assert await connection.scalar(text(
+                    "SELECT COUNT(*) FROM synced_notebooks WHERE owner_id = :owner"
+                ), {"owner": owner}) == 0
+        finally:
+            await engine.dispose()
+
+    asyncio.run(assert_read_only())
+
+
+def test_retirement_migration_activates_only_empty_historical_accounts(client):
+    empty = uuid.UUID("00000000-0000-4000-8000-000000000016")
+    archived = uuid.UUID("00000000-0000-4000-8000-000000000017")
+    empty_token, _ = create_access_token(empty, 1)
+    archived_token, _ = create_access_token(archived, 1)
+
+    assert client.get("/v2/activation/readiness", headers=headers(empty_token)).json() == {
+        "protocol": "v2", "writeEnabled": True, "version": 1,
+    }
+    assert client.get(
+        "/v2/activation/readiness", headers=headers(archived_token),
+    ).status_code == 409
+    assert client.get(
+        "/v1/auth/protocol", headers=headers(archived_token),
+    ).json() == {"protocol": "v1"}
+
+    async def read_archive():
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        try:
+            async with engine.connect() as connection:
+                row = await connection.execute(text("""
+                    SELECT revision, content, deleted_at
+                    FROM synced_notebooks WHERE owner_id = :owner AND uid = 'legacy-deletion'
+                """), {"owner": archived})
+                revision, content, deleted_at = row.one()
+                assert revision == 1 and content is None and deleted_at is not None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(read_archive())
 
 
 def test_1000_inserts_1000_deletes_and_idempotent_retries(client):
@@ -814,37 +849,43 @@ def test_historical_account_cutover_is_atomic_scoped_and_idempotent(client):
     ink = {"id": "old-ink", "tool": 0, "width": 2, "color": 0xff112233,
            "points": [{"dx": 1, "dy": 2, "pressure": 0.5}]}
 
-    def put(doc, expected, pages):
-        return client.put(
-            f"/v1/sync/notebooks/{doc}",
-            headers={**auth, "Idempotency-Key": uuid.uuid4().hex},
-            json={"expectedRevision": expected, "notebook": {
-                "uid": doc, "title": "History", "kind": 0, "folder": "Notes/Sub",
-                "createdAt": now, "updatedAt": now, "pages": pages,
-            }},
-        )
+    def seed_revision(doc, revision, pages, *, deleted=False):
+        notebook = None if deleted else json.dumps({
+            "uid": doc, "title": "History", "kind": 0, "folder": "Notes/Sub",
+            "createdAt": now, "updatedAt": now, "pages": pages,
+        })
+        sql("""
+            INSERT INTO synced_notebooks (id, owner_id, uid, content, revision, deleted_at)
+            VALUES (:row_id, :owner, :doc, CAST(:content AS jsonb), :revision,
+                    CASE WHEN :deleted THEN now() ELSE NULL END)
+            ON CONFLICT (owner_id, uid) DO UPDATE SET
+              content = excluded.content, revision = excluded.revision,
+              deleted_at = excluded.deleted_at
+        """, row_id=uuid.uuid4(), owner=owner, doc=doc, content=notebook,
+             revision=revision, deleted=deleted)
+        sql("""
+            INSERT INTO change_events (owner_id, entity_uid, revision, deleted, content)
+            VALUES (:owner, :doc, :revision, :deleted, CAST(:content AS jsonb))
+        """, owner=owner, doc=doc, revision=revision, deleted=deleted, content=notebook)
 
     page = {"id": "page-" + owner.hex, "title": "Kept", "isBookmarked": True,
             "textBlocks": [formatted], "imageBlocks": [image], "inkStrokes": []}
     old_page = {**page, "id": "old-page", "textBlocks": [], "imageBlocks": [],
                 "inkStrokes": [ink]}
-    assert put(uid, 0, [page, old_page]).status_code == 200
-    assert put(dead, 0, [page]).status_code == 200
-    deleted = client.request(
-        "DELETE", f"/v1/sync/notebooks/{dead}",
-        headers={**auth, "Idempotency-Key": uuid.uuid4().hex},
-        json={"expectedRevision": 1},
-    )
-    assert deleted.status_code == 200, deleted.text
+    seed_revision(uid, 1, [page, old_page])
+    seed_revision(dead, 1, [page])
+    seed_revision(dead, 2, [], deleted=True)
     library = {"folders": ["Notes/Sub"], "covers": {}, "plannerTasks": {
         "planner-1": [{"id": "task-1", "title": "Complete", "completed": True}]
     }, "recentCoverColors": []}
-    assert client.put("/v1/account-settings/libraryState", headers=auth, json={
-        "expectedRevision": 0, "value": library,
-    }).status_code == 200
-    assert client.put("/v1/account-settings/backupPreferences", headers=auth, json={
-        "expectedRevision": 0, "value": {"version": 1, "idleSeconds": 30},
-    }).status_code == 200
+    for category, value in (
+        ("libraryState", library),
+        ("backupPreferences", {"version": 1, "idleSeconds": 30}),
+    ):
+        sql("""
+            INSERT INTO account_settings (owner_id, category, revision, content)
+            VALUES (:owner, :category, 1, CAST(:content AS jsonb))
+        """, owner=owner, category=category, content=json.dumps(value))
 
     async def migrate(**kwargs):
         engine = create_async_engine(os.environ["NN_STAGE12_FIXTURE_DATABASE_URL"])
@@ -855,12 +896,22 @@ def test_historical_account_cutover_is_atomic_scoped_and_idempotent(client):
             await engine.dispose()
 
     broken = {**page, "imageBlocks": [{**image, "bytes": None}]}
-    assert put(uid, 1, [broken]).status_code == 200
-    cursor = client.get("/v1/sync/bootstrap", headers=auth).json()["cursor"]
+    seed_revision(uid, 2, [broken])
+    async def historical_cursor():
+        engine = create_async_engine(os.environ["NN_STAGE12_FIXTURE_DATABASE_URL"])
+        try:
+            async with engine.connect() as connection:
+                return await connection.scalar(text(
+                    "SELECT MAX(id) FROM change_events WHERE owner_id = :owner"
+                ), {"owner": owner})
+        finally:
+            await engine.dispose()
+
+    cursor = asyncio.run(historical_cursor())
     with pytest.raises(LegacyConversionError, match="inline bytes"):
         asyncio.run(migrate(apply=True, expected_cursor=cursor))
     assert client.get("/v1/auth/protocol", headers=auth).json() == {"protocol": "v1"}
-    assert put(uid, 2, [page]).status_code == 200
+    seed_revision(uid, 3, [page])
     with pytest.raises(LegacyConversionError, match="cursor changed"):
         asyncio.run(migrate(apply=True, expected_cursor=cursor))
 
@@ -877,8 +928,9 @@ def test_historical_account_cutover_is_atomic_scoped_and_idempotent(client):
         "legacyCursor": report["legacy_cursor"],
         "operationCursor": activated["operation_cursor"],
     }
-    assert client.get("/v1/sync/bootstrap", headers=auth).status_code == 409
-    assert put(uid, 3, [page]).status_code == 409
+    assert client.get("/v1/sync/bootstrap", headers=auth).status_code == 404
+    assert client.put(f"/v1/sync/notebooks/{uid}", headers=auth,
+                      json={"notebook": {}}).status_code == 404
     historical = {"uid": uid, "revision": 1}
     archive = client.get("/v2/activation/legacy-source", params=historical, headers=auth)
     assert archive.json()["notebook"]["pages"][1]["id"] == "old-page"

@@ -16,7 +16,7 @@ from ..realtime_hub import hub
 from ..security import current_user
 from .operations import require_operations_v2_write
 from .planner import PlannerWrite, list_entries, record_json
-from .sync import lock_owner_events
+from ..owner_lock import lock_owner_events
 
 router = APIRouter(prefix="/v2/planner", tags=["planner-v2"])
 

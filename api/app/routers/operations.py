@@ -34,7 +34,7 @@ from ..realtime_hub import hub
 from ..security import decode_access_token_claims, token_digest
 from ..settings import get_settings
 from .study_shares import ensure_active
-from .sync import lock_owner_events
+from ..owner_lock import lock_owner_events
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v2", tags=["operations"])
@@ -510,7 +510,7 @@ async def post_batch(
         seen.add(op.operation_id)
         operations.append(op)
 
-    # Serializes account commits with v1 sync and revocations, so a later
+    # Serializes account commits with account migration and revocations, so a later
     # cursor cannot become visible before an earlier transaction commits.
     await lock_owner_events(session, principal.owner_id)
     await require_v2_protocol(session, principal.owner_id)

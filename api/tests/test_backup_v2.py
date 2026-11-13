@@ -247,26 +247,26 @@ def test_wrong_backup_format_is_rejected_after_protocol_fence(monkeypatch):
 
     called = []
 
-    async def fence(session, owner_id, *, v2):
-        called.append(v2)
+    async def fence(session, owner_id):
+        called.append(owner_id)
         raise HTTPException(status_code=409, detail="wrong protocol")
 
-    monkeypatch.setattr(backups, "_require_backup_protocol", fence)
+    monkeypatch.setattr(backups, "require_v2_protocol", fence)
 
     class Session:
         async def execute(self, statement):
             return None
 
     async def rejected():
-        return await backups._create_backup(
+        return await backups.create_v2_backup(
             SimpleNamespace(sizeBytes=10, formatVersion=9),
-            SimpleNamespace(id=uuid.uuid4()), Session(), v2=False,
+            SimpleNamespace(id=uuid.uuid4()), Session(),
         )
 
     with pytest.raises(HTTPException) as rejected_result:
         asyncio.run(rejected())
     assert rejected_result.value.status_code == 409
-    assert called == [False]
+    assert len(called) == 1 and isinstance(called[0], uuid.UUID)
 
 
 def test_reference_asset_with_modified_owner_or_mime_is_rejected():

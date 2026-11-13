@@ -81,6 +81,7 @@ def test_account_scoped_revisioned_writes_and_conflicts(monkeypatch):
     account = User(id=uuid.uuid4(), username="account", password_hash="hash")
     other = User(id=uuid.uuid4(), username="other", password_hash="hash")
     session = MemorySession()
+    session.protocols.update({account.id: "v2", other.id: "v2"})
     notifications = []
 
     async def publish(target, message):
@@ -89,7 +90,7 @@ def test_account_scoped_revisioned_writes_and_conflicts(monkeypatch):
     monkeypatch.setattr(api.hub, "publish", publish)
 
     async def run():
-        first = await api.put_account_settings(
+        first = await api.put_v2_account_settings(
             "backupPreferences",
             api.SettingsWrite(
                 expectedRevision=0,
@@ -102,7 +103,7 @@ def test_account_scoped_revisioned_writes_and_conflicts(monkeypatch):
         assert first["value"]["idleSeconds"] == 900
 
         with pytest.raises(HTTPException) as conflict:
-            await api.put_account_settings(
+            await api.put_v2_account_settings(
                 "backupPreferences",
                 api.SettingsWrite(
                     expectedRevision=0,
@@ -115,7 +116,7 @@ def test_account_scoped_revisioned_writes_and_conflicts(monkeypatch):
         assert conflict.value.detail["revision"] == 1
         assert conflict.value.detail["value"]["idleSeconds"] == 900
 
-        second = await api.put_account_settings(
+        second = await api.put_v2_account_settings(
             "backupPreferences",
             api.SettingsWrite(
                 expectedRevision=1,
@@ -126,7 +127,7 @@ def test_account_scoped_revisioned_writes_and_conflicts(monkeypatch):
         )
         assert second["revision"] == 2
 
-        separate = await api.put_account_settings(
+        separate = await api.put_v2_account_settings(
             "backupPreferences",
             api.SettingsWrite(
                 expectedRevision=0,
@@ -149,6 +150,7 @@ def test_account_scoped_revisioned_writes_and_conflicts(monkeypatch):
 def test_conflicting_settings_require_no_automatic_overwrite(monkeypatch):
     account = User(id=uuid.uuid4(), username="account", password_hash="hash")
     session = MemorySession()
+    session.protocols[account.id] = "v2"
     session.records[(account.id, "recentColors")] = AccountSettings(
         owner_id=account.id, category="recentColors", revision=7,
         content=[4278190080],
@@ -159,7 +161,7 @@ def test_conflicting_settings_require_no_automatic_overwrite(monkeypatch):
 
     monkeypatch.setattr(api.hub, "publish", no_publish)
     with pytest.raises(HTTPException) as conflict:
-        asyncio.run(api.put_account_settings(
+        asyncio.run(api.put_v2_account_settings(
             "recentColors",
             api.SettingsWrite(expectedRevision=3, value=[4294967295]),
             account,
@@ -226,31 +228,6 @@ def test_library_state_category_has_postgresql_migration():
         "plannerTasks": {},
         "recentCoverColors": [],
     })["folders"] == ["Notes"]
-
-
-def test_v2_account_cannot_write_legacy_account_settings(monkeypatch):
-    account = User(id=uuid.uuid4(), username="v2", password_hash="hash")
-    session = MemorySession()
-    session.protocols[account.id] = "v2"
-
-    async def no_publish(*args, **kwargs):
-        pytest.fail("Blocked v1 write must not publish.")
-
-    monkeypatch.setattr(api.hub, "publish", no_publish)
-    with pytest.raises(HTTPException) as error:
-        asyncio.run(api.put_account_settings(
-            "backupPreferences",
-            api.SettingsWrite(
-                expectedRevision=0,
-                value={"version": 1, "idleSeconds": 30},
-            ),
-            account,
-            session,
-        ))
-    assert error.value.status_code == 409
-    assert session.protocol_checks == 1
-    assert session.records == {}
-    assert session.commits == 0
 
 
 def test_v2_settings_cas_and_protocol_fence(monkeypatch):

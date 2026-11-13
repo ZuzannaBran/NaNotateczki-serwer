@@ -2,14 +2,17 @@
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 
 from app.models import User
-from app.routers.backups import list_backups
+from app.routers.backups import list_v2_backups
 
 
 def test_latest_verified_backup_uses_verification_order():
     class Session:
-        async def execute(self, statement):
+        async def execute(self, statement, parameters=None):
+            if parameters is not None:
+                return SimpleNamespace(scalar_one_or_none=lambda: "v2")
             sql = str(statement).lower()
             assert "verified_at desc" in sql
             assert "created_at desc" in sql
@@ -22,6 +25,6 @@ def test_latest_verified_backup_uses_verification_order():
             return Rows()
 
     user = User(id=uuid.uuid4(), username="tester", password_hash="hash")
-    assert asyncio.run(list_backups(user=user, session=Session())) == {
+    assert asyncio.run(list_v2_backups(user=user, session=Session())) == {
         "backups": [],
     }

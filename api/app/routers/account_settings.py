@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_protocol import require_legacy_protocol, require_v2_protocol
+from ..account_protocol import require_v2_protocol
 from ..database import database_session
 from ..models import AccountSettings, User
 from ..realtime_hub import hub
@@ -23,7 +23,6 @@ Category = Literal[
     "libraryState",
 ]
 
-router = APIRouter(prefix="/v1/account-settings", tags=["account-settings"])
 v2_router = APIRouter(prefix="/v2/account-settings", tags=["account-settings-v2"])
 V2Category = Literal[
     "appPreferences", "editorPreferences", "recentColors", "backupPreferences",
@@ -93,7 +92,6 @@ def validate_settings(category: Category, value: object) -> dict | list:
     return value
 
 
-@router.get("")
 async def get_account_settings(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
@@ -107,18 +105,6 @@ async def get_account_settings(
             for entry in result.scalars()
         }
     }
-
-
-@router.put("/{category}")
-async def put_account_settings(
-    category: Category,
-    body: SettingsWrite,
-    user: User = Depends(current_user),
-    session: AsyncSession = Depends(database_session),
-) -> dict:
-    return await _put_settings(
-        category, body, user, session, require_legacy_protocol
-    )
 
 
 @v2_router.get("")

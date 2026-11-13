@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from fastapi import WebSocketDisconnect
 
 from app.routers import operation_realtime
-from app.routers.realtime import realtime
 from app.settings import get_settings
 
 
@@ -29,21 +28,21 @@ class StubWebSocket:
 
 def test_originless_native_client_reaches_token_auth():
     socket = StubWebSocket()
-    asyncio.run(realtime(socket))
+    asyncio.run(operation_realtime.watch_operations(socket))
     assert socket.accepted
     assert socket.closed == 4401  # Bearer JWT remains required.
 
 
 def test_unknown_browser_origin_is_denied_before_auth():
     socket = StubWebSocket("https://attacker.invalid")
-    asyncio.run(realtime(socket))
+    asyncio.run(operation_realtime.watch_operations(socket))
     assert not socket.accepted
     assert socket.closed == 4403
 
 
 def test_configured_browser_origin_still_works():
     socket = StubWebSocket(str(get_settings().app_origin).rstrip("/"))
-    asyncio.run(realtime(socket))
+    asyncio.run(operation_realtime.watch_operations(socket))
     assert socket.accepted
     assert socket.closed == 4401
 

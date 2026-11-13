@@ -8,9 +8,9 @@ from types import SimpleNamespace
 from app.routers import study_shares
 
 
-def test_end_share_notifies_guest_even_if_frame_unlink_fails(monkeypatch):
+def test_end_share_notifies_guest_after_commit(monkeypatch):
     share = SimpleNamespace(
-        revoked_at=None,
+        revoked_at=None, edit_clock={"_protocol": "v2"},
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     published = []
@@ -21,10 +21,6 @@ def test_end_share_notifies_guest_even_if_frame_unlink_fails(monkeypatch):
     async def publish(channel, event):
         published.append(event)
 
-    class FailingPath:
-        def unlink(self, *, missing_ok=False):
-            raise PermissionError("private frame directory unavailable")
-
     class Session:
         committed = False
 
@@ -33,9 +29,6 @@ def test_end_share_notifies_guest_even_if_frame_unlink_fails(monkeypatch):
 
     monkeypatch.setattr(study_shares, "owner_share", owner_share)
     monkeypatch.setattr(study_shares.hub, "publish", publish)
-    monkeypatch.setattr(
-        study_shares, "frame_path", lambda share_id: FailingPath()
-    )
     session = Session()
     response = asyncio.run(
         study_shares.end_share(

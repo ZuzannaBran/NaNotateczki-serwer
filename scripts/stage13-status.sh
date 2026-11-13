@@ -33,7 +33,9 @@ SELECT count(*) AS v2_activated_accounts
 FROM account_sync_protocol;
 SELECT count(*) AS v2_accounts_with_legacy_documents
 FROM account_sync_protocol marker
-WHERE EXISTS (
+WHERE NOT EXISTS (
+  SELECT 1 FROM legacy_account_cutovers receipt WHERE receipt.owner_id = marker.owner_id
+) AND EXISTS (
   SELECT 1 FROM synced_notebooks legacy
   WHERE legacy.owner_id = marker.owner_id
 );
@@ -41,12 +43,18 @@ SELECT count(*) AS dual_protocol_documents
 FROM document_states projection
 JOIN synced_notebooks legacy
   ON legacy.owner_id = projection.owner_id
- AND legacy.uid = projection.document_uid;
+ AND legacy.uid = projection.document_uid
+WHERE NOT EXISTS (
+  SELECT 1 FROM legacy_account_cutovers receipt WHERE receipt.owner_id = projection.owner_id
+);
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM account_sync_protocol marker
     JOIN synced_notebooks legacy ON legacy.owner_id = marker.owner_id
+    WHERE NOT EXISTS (
+      SELECT 1 FROM legacy_account_cutovers receipt WHERE receipt.owner_id = marker.owner_id
+    )
   ) THEN
     RAISE EXCEPTION 'Activated v2 account still has legacy documents';
   END IF;
@@ -55,6 +63,9 @@ BEGIN
     JOIN synced_notebooks legacy
       ON legacy.owner_id = projection.owner_id
      AND legacy.uid = projection.document_uid
+    WHERE NOT EXISTS (
+      SELECT 1 FROM legacy_account_cutovers receipt WHERE receipt.owner_id = projection.owner_id
+    )
   ) THEN
     RAISE EXCEPTION 'Same UID is present in both v1 and v2';
   END IF;

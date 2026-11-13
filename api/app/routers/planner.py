@@ -1,22 +1,18 @@
-"""Per-account planner reconciliation with durable tombstones and LWW clocks."""
+"""Per-account planner reconciliation with durable tombstones."""
 
 import json
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Depends, Query
 from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_protocol import require_legacy_protocol
 from ..database import database_session
 from ..models import PlannerEntry, User
-from ..realtime_hub import hub
 from ..security import current_user
-from .sync import lock_owner_events
 
 
-router = APIRouter(prefix="/v1/planner", tags=["planner"])
 MAX_ENTRY_BYTES = 65536
 
 
@@ -59,7 +55,6 @@ class PlannerWrite(BaseModel):
         return self
 
 
-@router.get("/entries")
 async def list_entries(
     after: str = Query(default="", max_length=128),
     user: User = Depends(current_user),
@@ -77,47 +72,3 @@ async def list_entries(
         "entries": [record_json(record) for record in page],
         "next": page[-1].uid if len(records) > 200 else None,
     }
-
-
-@router.put("/entries/{uid}")
-async def put_entry(
-    uid: str,
-    body: PlannerWrite,
-    user: User = Depends(current_user),
-    session: AsyncSession = Depends(database_session),
-) -> dict:
-    if (not uid or len(uid) > 128
-            or (body.entry is not None and body.entry.get("id") != uid)):
-        raise HTTPException(status_code=422, detail="Planner entry ID mismatch")
-    await lock_owner_events(session, user.id)
-    await require_legacy_protocol(session, user.id)
-    record = await session.get(PlannerEntry, (user.id, uid))
-    created = record is None
-    if record is not None:
-        # An acknowledged deletion is permanent for this UID. A stale device
-        # must create a new entry with a new UID rather than resurrect this one.
-        if record.deleted:
-            return record_json(record)
-        if not body.deleted and body.modifiedAt <= record.modified_at:
-            return record_json(record)
-        # Deletions win against edits made on devices with clocks ahead.
-        # Preserve a monotonic timestamp for all readers and retries.
-        modified_at = (
-            max(body.modifiedAt, record.modified_at + timedelta(microseconds=1))
-            if body.deleted else body.modifiedAt
-        )
-    else:
-        modified_at = body.modifiedAt
-        record = PlannerEntry(
-            owner_id=user.id, uid=uid, content=None,
-            modified_at=modified_at, deleted=True, revision=1,
-        )
-        session.add(record)
-    if not created:
-        record.revision = (record.revision or 1) + 1
-    record.modified_at = modified_at
-    record.content = None if body.deleted else body.entry
-    record.deleted = body.deleted
-    await session.commit()
-    await hub.publish(user.id, {"type": "planner_changed", "id": uid})
-    return record_json(record)

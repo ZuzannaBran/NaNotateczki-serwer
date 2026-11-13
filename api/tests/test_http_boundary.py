@@ -24,14 +24,33 @@ def test_auth_request_is_rejected_before_large_body_is_parsed() -> None:
     assert response.status_code == 413
 
 
-def test_sync_write_limit_is_enforced_at_http_boundary() -> None:
+def test_operation_batch_limit_is_enforced_at_http_boundary() -> None:
     with TestClient(app) as client:
-        response = client.put(
-            "/v1/sync/notebooks/item",
+        response = client.post(
+            "/v2/operations/batch",
             content=b"{}",
-            headers={"Content-Length": str(16 * 1024 * 1024 + 1)},
+            headers={"Content-Length": str(1024 * 1024 + 1)},
         )
     assert response.status_code == 413
+
+
+def test_legacy_writers_are_not_routed_even_without_account_protocol():
+    retired = (
+        ("GET", "/v1/sync/bootstrap"),
+        ("PUT", "/v1/sync/notebooks/item"),
+        ("DELETE", "/v1/sync/notebooks/item"),
+        ("PUT", "/v1/planner/entries/item"),
+        ("PUT", "/v1/account-settings/libraryState"),
+        ("POST", "/v1/backups"),
+        ("PUT", "/v1/backups/5c7f08a6-47f8-4b18-a503-64808a5452d4/content"),
+        ("POST", "/v1/study-shares"),
+        ("PUT", "/v1/study-shares/5c7f08a6-47f8-4b18-a503-64808a5452d4/document"),
+        ("PUT", "/v2/study-shares/5c7f08a6-47f8-4b18-a503-64808a5452d4/document"),
+    )
+    with TestClient(app) as client:
+        for method, route in retired:
+            response = client.request(method, route, json={})
+            assert response.status_code == 404, (route, response.text)
 
 
 def test_password_change_requires_authentication() -> None:

@@ -1,16 +1,13 @@
 # Etap 14 — destrukcyjna migracja wyłącznie konta testowego
 
-## Status i ograniczenie klienta
+## Kiedy użyć resetu
 
 W przypadku danych testowych nie trzeba konwertować historycznych dokumentów
 v1 do operacji v2. Można je **świadomie skasować** i aktywować pustą przestrzeń
 v2 dla tego samego konta. Serwer zachowuje identyfikator, login i hash hasła.
-To **nie** migruje kodu aplikacji: produkcyjne AppScope,
-LiveWebSyncService, StudyShareGuestEditor i backup nadal korzystają z v1.
-Nie wykonuj resetu swojego normalnego konta, dopóki klient Flutter
-nie zostanie przełączony na v2. Może to unieruchomić edycję do czasu
-aktualizacji klienta. Do technicznych testów korzystaj wyłącznie
-z wydzielonego konta testowego i klienta API v2 z etapu 12.
+Po pakiecie 11 aktualny klient Flutter korzysta wyłącznie z v2.
+Puste konta są automatycznie aktywowane przez migrację 0016 i nie wymagają
+resetu. Dla wartościowych danych użyj konwersji historycznej, nie resetu.
 
 ## Przed resetem
 
@@ -61,22 +58,14 @@ dostępu do tych magazynów. Historyczne pliki backupów i raportów na
 dysku serwera pozostają do ręcznej, jawnej retencji; rekordy backupów
 są usunięte i nie będą pobierane przez API.
 
-## Włączenie tylko testowego właściciela
+## Uruchomienie po resecie
 
-W pliku .env ustaw:
+Uruchom aktualny backend:
 
-    OPERATIONS_V2_WRITE_MODE=canary
-    OPERATIONS_V2_CANARY_OWNER_IDS=<UUID_KONTA_TESTOWEGO>
+    bash scripts/deploy-v2.sh
 
-Następnie:
-
-    docker compose up -d --build api
-    bash scripts/stage13-status.sh
-    bash scripts/stage14-retirement-audit.sh
-
-Audyt etapu 14 może nadal zwrócić kod 75, jeśli inne konta korzystają z
-v1. To prawidłowe zachowanie. Nie ustawiaj OPERATIONS_V2_WRITE_MODE=all
-w celu obejścia blokady.
+Zaloguj się aktualną aplikacją do wyczyszczonego testowego magazynu konta.
+Stare klienty nie odzyskają dostępu do zapisu v1.
 
 ## Testy
 
@@ -85,7 +74,7 @@ Na komputerze z checkoutem backendu, bez dotykania bazy produkcyjnej:
     python3 -m unittest discover -s scripts/tests \
       -p 'test_stage14_reset_test_account.py'
     python3 -m pytest -q \
-      api/tests/test_stage14_reset_legacy_write_fences.py
+      api/tests/test_http_boundary.py
     bash scripts/run-stage12-real.sh --quick
 
 Dwa pierwsze zestawy sprawdzają zabezpieczenia przy atrapach danych i
@@ -93,16 +82,6 @@ Dockera. Ostatni korzysta z disposable PostgreSQL i API; nie zastępuje
 testu pełnej aplikacji oraz nie testuje procedury resetu na realnym koncie.
 Przed produkcją wymagana jest odrębna walidacja SQL resetu na wyłącznie
 testowym użytkowniku w izolowanej bazie i pełny test Flutter E2E.
-
-## Pozostałe prace przed usunięciem v1
-
-- Podłączenie SyncEngine do wszystkich akcji edytora, z trwałym lokalnym
-  outboxem, aktualizacją UI i migracją namespace (Local/konta/Share).
-- Transfer assetów oraz atrybutów tekstu Quill: obecny reducer v2 je
-  blokuje. Nie wolno po cichu gubić tych elementów.
-- Integracja host/guest, ustawień, backupu i logout z v2.
-- Testy dwóch prawdziwych urządzeń, awarii, backupu i restartu.
-- Dopiero potem usuwanie v1 routerów, timerów i zgodnościowego lustra.
 
 ## Sonda kompatybilności starego klienta
 

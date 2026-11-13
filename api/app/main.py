@@ -9,9 +9,8 @@ from sqlalchemy import text
 
 from .database import engine
 from .routers import (
-    account_settings, assets, auth, backups, operation_realtime, operations, planner,
-    planner_v2,
-    realtime, reports, study_shares, sync,
+    account_settings, assets, auth, backups, operation_realtime, operations,
+    planner_v2, reports, study_shares,
 )
 from .settings import get_settings
 
@@ -53,17 +52,9 @@ async def security_boundary(request: Request, call_next):
             return JSONResponse(
                 status_code=411, content={"detail": "Content-Length is required."}
             )
-        if request.url.path.startswith("/v1/study-shares/") and request.url.path.endswith("/document"):
-            maximum = settings.maximum_sync_bytes
-        elif request.url.path.startswith("/v1/study-shares/") and request.url.path.endswith("/frame"):
-            maximum = 2 * 1024 * 1024
-        elif request.url.path == "/v1/account-settings/libraryState":
-            maximum = 3 * 1024 * 1024
-        elif request.url.path.startswith("/v1/sync/notebooks/"):
-            maximum = settings.maximum_sync_bytes
-        elif request.url.path.startswith("/v2/assets/"):
+        if request.url.path.startswith("/v2/assets/"):
             maximum = settings.maximum_asset_bytes
-        elif request.url.path.startswith(("/v1/backups/", "/v2/backups/")) and request.url.path.endswith(
+        elif request.url.path.startswith("/v2/backups/") and request.url.path.endswith(
             "/content"
         ):
             maximum = settings.maximum_backup_bytes
@@ -98,16 +89,11 @@ async def ready() -> dict:
 
 
 app.include_router(auth.router)
-app.include_router(account_settings.router)
 app.include_router(account_settings.v2_router)
-app.include_router(planner.router)
 app.include_router(planner_v2.router)
-app.include_router(backups.router)
 app.include_router(backups.v2_router)
-app.include_router(sync.router)
 app.include_router(operations.router)
 app.include_router(assets.router)
 app.include_router(operation_realtime.router)
-app.include_router(realtime.router)
 app.include_router(study_shares.router)
 app.include_router(reports.router)

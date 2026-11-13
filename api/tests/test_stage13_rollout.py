@@ -46,7 +46,7 @@ def test_v2_writes_require_explicit_rollout(monkeypatch, mode, canaries, allowed
         assert error.value.status_code == 403
 
 
-def test_v2_rollout_is_disabled_by_default(monkeypatch):
+def test_v2_rollout_is_enabled_by_default(monkeypatch):
     monkeypatch.delenv("OPERATIONS_V2_WRITE_MODE", raising=False)
     monkeypatch.delenv("OPERATIONS_V2_CANARY_OWNER_IDS", raising=False)
     settings = Settings(
@@ -54,7 +54,7 @@ def test_v2_rollout_is_disabled_by_default(monkeypatch):
         APP_ORIGIN="https://app.example.test",
         JWT_SECRET="a" * 64,
     )
-    assert settings.operations_v2_write_mode == "disabled"
+    assert settings.operations_v2_write_mode == "all"
 
 
 def test_canary_uuid_configuration_must_be_valid(monkeypatch):

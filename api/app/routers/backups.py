@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_protocol import require_legacy_protocol, require_v2_protocol
+from ..account_protocol import require_v2_protocol
 from ..asset_store import asset_path, valid_verified_file
 from ..database import database_session
 from ..models import Device, DeviceBackup, DocumentOperation, User, VerifiedAsset
@@ -25,7 +25,6 @@ from ..security import current_user
 from ..settings import get_settings
 
 
-router = APIRouter(prefix="/v1/backups", tags=["backups"])
 v2_router = APIRouter(prefix="/v2/backups", tags=["backups-v2"])
 logger = logging.getLogger(__name__)
 # One worker has a 700 MiB memory limit. Validate large JSON snapshots
@@ -55,33 +54,18 @@ async def owned_backup(
     return backup
 
 
-@router.post("", status_code=201)
-async def create_backup(
-    body: BackupCreate,
-    user: User = Depends(current_user),
-    session: AsyncSession = Depends(database_session),
-) -> dict:
-    return await _create_backup(body, user, session, v2=False)
-
-
 @v2_router.post("", status_code=201)
 async def create_v2_backup(
     body: BackupCreate,
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
-    return await _create_backup(body, user, session, v2=True)
-
-
-async def _create_backup(
-    body: BackupCreate, user: User, session: AsyncSession, *, v2: bool,
-) -> dict:
     settings = get_settings()
     if body.sizeBytes > settings.maximum_backup_bytes:
         raise HTTPException(status_code=413, detail="Backup is too large.")
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
-    await _require_backup_protocol(session, user.id, v2=v2)
-    if body.formatVersion != (3 if v2 else 2):
+    await require_v2_protocol(session, user.id)
+    if body.formatVersion != 3:
         raise HTTPException(status_code=422, detail="Wrong backup protocol version.")
     device = await session.get(Device, body.deviceId)
     now = datetime.now(UTC)
@@ -115,17 +99,6 @@ async def _create_backup(
     return {"backupId": str(backup_id), "status": "pending"}
 
 
-@router.put("/{backup_id}/content", status_code=204)
-async def upload_content(
-    backup_id: uuid.UUID,
-    request: Request,
-    content_sha256: str = Header(alias="X-Content-SHA256"),
-    user: User = Depends(current_user),
-    session: AsyncSession = Depends(database_session),
-) -> None:
-    return await _upload_content(backup_id, request, content_sha256, user, session, v2=False)
-
-
 @v2_router.put("/{backup_id}/content", status_code=204)
 async def upload_v2_content(
     backup_id: uuid.UUID,
@@ -134,16 +107,9 @@ async def upload_v2_content(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> None:
-    return await _upload_content(backup_id, request, content_sha256, user, session, v2=True)
-
-
-async def _upload_content(
-    backup_id: uuid.UUID, request: Request, content_sha256: str,
-    user: User, session: AsyncSession, *, v2: bool,
-) -> None:
     backup = await owned_backup(backup_id, user.id, session, lock=True)
-    await _require_backup_protocol(session, user.id, v2=v2)
-    if backup.format_version != (3 if v2 else 2):
+    await require_v2_protocol(session, user.id)
+    if backup.format_version != 3:
         raise HTTPException(status_code=404, detail="Backup not found.")
     if backup.status != "pending":
         raise HTTPException(status_code=409, detail="Backup is not pending.")
@@ -181,44 +147,22 @@ async def _upload_content(
         raise HTTPException(status_code=422, detail="Backup checksum or size mismatch.")
 
 
-@router.post("/{backup_id}/finalize")
-async def finalize_backup(
-    backup_id: uuid.UUID,
-    user: User = Depends(current_user),
-    session: AsyncSession = Depends(database_session),
-) -> dict:
-    return await _finalize_backup_with_protocol(
-        backup_id, user, session, v2=False,
-    )
-
-
 @v2_router.post("/{backup_id}/finalize")
 async def finalize_v2_backup(
     backup_id: uuid.UUID,
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
-    return await _finalize_backup_with_protocol(
-        backup_id, user, session, v2=True,
-    )
-
-
-async def _finalize_backup_with_protocol(
-    backup_id: uuid.UUID, user: User, session: AsyncSession, *, v2: bool,
-) -> dict:
     async with _finalize_lock:
-        await _require_backup_protocol(session, user.id, v2=v2)
-        if v2:
-            return await _finalize_backup(backup_id, user, session, v2=True)
+        await require_v2_protocol(session, user.id)
         return await _finalize_backup(backup_id, user, session)
 
 
 async def _finalize_backup(
     backup_id: uuid.UUID, user: User, session: AsyncSession,
-    *, v2: bool = False,
 ) -> dict:
     backup = await owned_backup(backup_id, user.id, session, lock=True)
-    if backup.format_version != (3 if v2 else 2):
+    if backup.format_version != 3:
         raise HTTPException(status_code=404, detail="Backup not found.")
     if backup.status != "pending":
         raise HTTPException(status_code=409, detail="Backup is not pending.")
@@ -230,8 +174,7 @@ async def _finalize_backup(
         raw = await asyncio.to_thread(temporary.read_bytes)
         envelope = json.loads(raw)
         validate_envelope(envelope, backup, original_json=raw)
-        if v2:
-            await _validate_verified_v2_history(envelope, backup, session)
+        await _validate_verified_v2_history(envelope, backup, session)
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
         logger.warning("Rejected backup %s: %s", backup.id, error)
         backup.status = "rejected"
@@ -519,42 +462,18 @@ async def _validate_verified_v2_history(
             raise ValueError("archived asset reference is not durable")
 
 
-async def _require_backup_protocol(
-    session: AsyncSession, owner_id: uuid.UUID, *, v2: bool,
-) -> None:
-    if v2:
-        await require_v2_protocol(session, owner_id)
-    else:
-        await require_legacy_protocol(session, owner_id)
-
-
-@router.get("")
-async def list_backups(
-    user: User = Depends(current_user),
-    session: AsyncSession = Depends(database_session),
-) -> dict:
-    return await _list_backups(user, session, v2=False)
-
-
 @v2_router.get("")
 async def list_v2_backups(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
-    return await _list_backups(user, session, v2=True)
-
-
-async def _list_backups(
-    user: User, session: AsyncSession, *, v2: bool,
-) -> dict:
-    if v2:
-        await require_v2_protocol(session, user.id)
+    await require_v2_protocol(session, user.id)
     result = await session.execute(
         select(DeviceBackup)
         .where(
             DeviceBackup.owner_id == user.id,
             DeviceBackup.status == "verified",
-            DeviceBackup.format_version == (3 if v2 else 2),
+            DeviceBackup.format_version == 3,
         )
         .order_by(desc(DeviceBackup.verified_at), desc(DeviceBackup.created_at))
         .limit(100)
@@ -574,31 +493,15 @@ async def _list_backups(
     }
 
 
-@router.get("/{backup_id}/download")
-async def download_backup(
-    backup_id: uuid.UUID,
-    user: User = Depends(current_user),
-    session: AsyncSession = Depends(database_session),
-) -> FileResponse:
-    return await _download_backup(backup_id, user, session, v2=False)
-
-
 @v2_router.get("/{backup_id}/download")
 async def download_v2_backup(
     backup_id: uuid.UUID,
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> FileResponse:
-    return await _download_backup(backup_id, user, session, v2=True)
-
-
-async def _download_backup(
-    backup_id: uuid.UUID, user: User, session: AsyncSession, *, v2: bool,
-) -> FileResponse:
-    if v2:
-        await require_v2_protocol(session, user.id)
+    await require_v2_protocol(session, user.id)
     backup = await owned_backup(backup_id, user.id, session)
-    if backup.format_version != (3 if v2 else 2):
+    if backup.format_version != 3:
         raise HTTPException(status_code=404, detail="Backup not found.")
     if backup.status != "verified":
         raise HTTPException(status_code=404, detail="Verified backup not found.")

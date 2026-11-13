@@ -88,4 +88,4 @@ def test_legacy_share_ticket_never_authorizes_operational_writes():
         asyncio.run(authorize(
             _ShareSession(share, grant), "Bearer " + "s" * 40, share.id,
         ))
-    assert error.value.status_code == 403
+    assert error.value.status_code == 410

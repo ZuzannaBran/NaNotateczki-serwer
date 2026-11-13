@@ -11,7 +11,7 @@ from app.routers import backups
 
 
 class MemorySession:
-    def __init__(self, protocol="v1"):
+    def __init__(self, protocol="v2"):
         self.protocol = protocol
         self.checks = 0
 
@@ -40,10 +40,10 @@ def test_large_finalizations_are_serialized(monkeypatch):
 
     async def exercise():
         return await asyncio.gather(
-            backups.finalize_backup(
+            backups.finalize_v2_backup(
                 uuid.uuid4(), SimpleNamespace(id=uuid.uuid4()), session
             ),
-            backups.finalize_backup(
+            backups.finalize_v2_backup(
                 uuid.uuid4(), SimpleNamespace(id=uuid.uuid4()), session
             ),
         )
@@ -71,19 +71,19 @@ def test_v2_backup_finalize_keeps_explicit_version_routing(monkeypatch):
         uuid.uuid4(), SimpleNamespace(id=uuid.uuid4()), session,
     ))
     assert result == {"status": "verified"}
-    assert seen == [{"v2": True}]
+    assert seen == [{}]
     assert session.checks == 1
 
 
 
 def test_v2_backup_finalize_rejected_before_finalization(monkeypatch):
     async def should_not_finalize(*args):
-        pytest.fail("Legacy finalization must not run on a v2 account.")
+        pytest.fail("Unconverted accounts must not enter finalization.")
 
     monkeypatch.setattr(backups, "_finalize_backup", should_not_finalize)
-    session = MemorySession(protocol="v2")
+    session = MemorySession(protocol="v1")
     with pytest.raises(HTTPException) as error:
-        asyncio.run(backups.finalize_backup(
+        asyncio.run(backups.finalize_v2_backup(
             uuid.uuid4(), SimpleNamespace(id=uuid.uuid4()), session
         ))
     assert error.value.status_code == 409

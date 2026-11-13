@@ -37,6 +37,19 @@ GRANT USAGE ON SCHEMA public TO nano_app;
 SQL
 
 for migration in migrations/*.sql; do
+  if [[ "${migration##*/}" == "0016_retire_legacy_sync.sql" ]]; then
+    # Exercise the real upgrade of pre-existing empty and historical accounts.
+    "${compose[@]}" exec -T db psql -q \
+      -U stage12_admin -d nanotateczki_stage12_test \
+      -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO users (id, username, password_hash)
+VALUES ('00000000-0000-4000-8000-000000000016', 's12_empty_legacy', 'not-a-login'),
+       ('00000000-0000-4000-8000-000000000017', 's12_archived_legacy', 'not-a-login');
+INSERT INTO synced_notebooks (id, owner_id, uid, revision, deleted_at)
+VALUES ('00000000-0000-4000-8000-000000000018',
+        '00000000-0000-4000-8000-000000000017', 'legacy-deletion', 1, now());
+SQL
+  fi
   echo "Applying isolated test migration: $(basename "$migration")"
   "${compose[@]}" exec -T db psql -q \
     -U stage12_admin -d nanotateczki_stage12_test \
@@ -135,8 +148,14 @@ INSERT INTO users (id, username, password_hash, auth_version)
 VALUES (:'owner_id'::uuid,
         's12_' || substr(replace(:'owner_id', '-', ''), 1, 24),
         'not-a-login-password', 1);
-INSERT INTO account_sync_protocol (owner_id, protocol)
-VALUES (:'owner_id'::uuid, 'v2');
+SELECT EXISTS (
+  SELECT 1 FROM account_sync_protocol
+  WHERE owner_id = :'owner_id'::uuid AND protocol = 'v2'
+) AS activated \gset
+\if :activated
+\else
+  SELECT 'Fresh Stage 12 identity did not get the v2 marker'::integer;
+\endif
 COMMIT;
 SQL
   test_access_token="$(
