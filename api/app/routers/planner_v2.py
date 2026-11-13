@@ -9,10 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_protocol import require_v2_protocol
 from ..database import database_session
 from ..models import PlannerEntry, PlannerEntryMutation, User
 from ..realtime_hub import hub
 from ..security import current_user
+from .operations import require_operations_v2_write
 from .planner import PlannerWrite, list_entries, record_json
 from .sync import lock_owner_events
 
@@ -42,6 +44,7 @@ async def get_entries(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    await require_v2_protocol(session, user.id)
     return await list_entries(after=after, user=user, session=session)
 
 
@@ -66,6 +69,8 @@ async def put_entry(
 
     # Serializes mutations on this account, including legacy v1 requests.
     await lock_owner_events(session, user.id)
+    await require_v2_protocol(session, user.id)
+    require_operations_v2_write(user.id)
     receipt = await session.get(
         PlannerEntryMutation, (user.id, body.operationId)
     )

@@ -4,6 +4,8 @@ Run only against the disposable database created by scripts/run-stage12-real.sh.
 No fake database, dependency overrides, or mocked WebSocket hub are used.
 """
 import asyncio
+import hashlib
+import json
 import os
 import uuid
 from dataclasses import dataclass
@@ -335,6 +337,79 @@ def test_persistent_protocol_fence_rejects_cross_writers(client):
     )
     assert response.status_code == 409, response.text
     assert "operation API v2" in str(response.json())
+
+
+def test_v2_planner_and_backup_use_activated_account(client):
+    _, v1_token = identity(v2=False)
+    owner_id, token = identity()
+    for access, expected in ((v1_token, 409), (token, 200)):
+        response = client.get("/v2/activation/readiness", headers=headers(access))
+        assert response.status_code == expected, response.text
+
+    entry_id = "event-" + uuid.uuid4().hex
+    mutation = {
+        "operationId": str(uuid.uuid4()), "expectedRevision": 0,
+        "entry": {"id": entry_id, "kind": "event", "title": "Offline replay",
+                  "scheduledAt": "2026-11-13T11:00:00Z"},
+    }
+    for access, expected in ((v1_token, 409), (token, 200)):
+        response = client.put(f"/v2/planner/entries/{entry_id}",
+                              headers=headers(access), json=mutation)
+        assert response.status_code == expected, response.text
+    planner = client.get("/v2/planner/entries", headers=headers(token)).json()
+    assert planner["entries"][0]["revision"] == 1
+    assert planner["entries"][0]["id"] == entry_id
+
+    document, _, _, _ = initial_document(client, token)
+    history = feed(client, token)
+    cursor = history[-1]["cursor"]
+    device_id = str(uuid.uuid4())
+    payload = {
+        "notebooks": [], "operationHistory": history, "assetBlobs": {},
+        "libraryState": {}, "studyPlannerState": {"sessions": []},
+        "appPreferences": {}, "editorPreferences": {},
+        "recentColors": [], "backupPreferences": {},
+    }
+    def compact(value):
+        return json.dumps(value, separators=(",", ":")).encode()
+
+    archive = compact({
+        "format": "nanotateczki-server-backup", "version": 3,
+        "protocol": "operations-v2", "schemaVersion": 8,
+        "accountId": str(owner_id), "deviceId": device_id,
+        "operationCheckpoint": {f"account:{owner_id}": cursor},
+        "checksumAlgorithm": "sha256",
+        "checksum": hashlib.sha256(compact(payload)).hexdigest(),
+        "createdAt": datetime.now(UTC).isoformat(), "payload": payload,
+    })
+    digest = hashlib.sha256(archive).hexdigest()
+    created = client.post("/v2/backups", headers=headers(token), json={
+        "deviceId": device_id, "formatVersion": 3,
+        "sizeBytes": len(archive), "sha256": digest,
+    })
+    assert created.status_code == 201, created.text
+    backup_id = created.json()["backupId"]
+    uploaded = client.put(f"/v2/backups/{backup_id}/content", headers={
+        **headers(token), "X-Content-SHA256": digest,
+        "Content-Type": "application/octet-stream",
+    }, content=archive)
+    assert uploaded.status_code == 204, uploaded.text
+    assert client.get("/v2/backups", headers=headers(token)).json()["backups"] == []
+
+    # A newer committed tombstone does not invalidate a verified older prefix.
+    deleter = Actor(document, "backup-delete-" + uuid.uuid4().hex, clock=2)
+    submit(client, token, [deleter.next(
+        "document.delete", payload={}, after=[history[-1]["operation"]["operationId"]],
+    )])
+    finalized = client.post(f"/v2/backups/{backup_id}/finalize", headers=headers(token))
+    assert finalized.status_code == 200, finalized.text
+    assert finalized.json()["status"] == "verified"
+    download = client.get(f"/v2/backups/{backup_id}/download", headers=headers(token))
+    assert download.status_code == 200 and download.content == archive
+    assert feed(client, token)[-1]["operation"]["type"] == "document.delete"
+    _, other = identity()
+    assert client.get(f"/v2/backups/{backup_id}/download",
+                      headers=headers(other)).status_code == 404
 
 
 def test_1000_inserts_1000_deletes_and_idempotent_retries(client):

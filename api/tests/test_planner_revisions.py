@@ -11,6 +11,7 @@ from app.main import app
 from app.models import PlannerEntry, PlannerEntryMutation, User
 from app.routers import planner, planner_v2
 from app.security import current_user
+from app.settings import get_settings
 
 
 class MemorySession:
@@ -18,6 +19,7 @@ class MemorySession:
         self.entries = {}
         self.receipts = {}
         self.commits = 0
+        self.protocol = "v2"
 
     async def get(self, model, key):
         if model is PlannerEntryMutation:
@@ -26,6 +28,8 @@ class MemorySession:
         return self.entries.get(key)
 
     async def execute(self, statement, parameters=None):
+        if "account_sync_protocol" in str(statement):
+            return SimpleNamespace(scalar_one_or_none=lambda: self.protocol)
         params = statement.compile().params
         owner = next(x for x in params.values() if isinstance(x, uuid.UUID))
         after = next((x for x in params.values() if isinstance(x, str)), "")
@@ -60,6 +64,9 @@ def environment(monkeypatch):
 
     monkeypatch.setattr(planner, "lock_owner_events", noop)
     monkeypatch.setattr(planner_v2, "lock_owner_events", noop)
+    monkeypatch.setattr(
+        planner_v2, "require_operations_v2_write", lambda owner: None,
+    )
     monkeypatch.setattr(planner.hub, "publish", noop)
     monkeypatch.setattr(planner_v2.hub, "publish", noop)
     try:
@@ -139,3 +146,27 @@ def test_empty_delete_is_tombstone_not_missing_record(environment):
     deleted = put(client, "gone", payload("gone", deleted=True))
     assert deleted.json()["revision"] == 1
     assert put(client, "gone", payload("gone")).status_code == 409
+
+
+def test_legacy_account_cannot_mutate_planner_via_v2(environment):
+    client, db, _ = environment
+    db.protocol = None
+    assert client.get("/v2/planner/entries").status_code == 409
+    assert put(client, "s", payload("s")).status_code == 409
+    assert not db.entries and not db.receipts and db.commits == 0
+
+
+def test_canary_allowlist_also_applies_to_planner(environment, monkeypatch):
+    from app.routers.operations import require_operations_v2_write
+
+    client, db, _ = environment
+    monkeypatch.setattr(
+        planner_v2, "require_operations_v2_write", require_operations_v2_write,
+    )
+    monkeypatch.setenv("OPERATIONS_V2_WRITE_MODE", "disabled")
+    get_settings.cache_clear()
+    try:
+        assert put(client, "s", payload("s")).status_code == 403
+        assert not db.entries and not db.receipts and db.commits == 0
+    finally:
+        get_settings.cache_clear()

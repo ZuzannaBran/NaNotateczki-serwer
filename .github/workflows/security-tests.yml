@@ -27,8 +27,8 @@ jobs:
       - name: Run security regression tests
         working-directory: api
         run: python -m pytest -q tests
-      - name: Verify offline canary activation safety
-        run: python -m unittest discover -s scripts/tests -p 'test_stage13_canary_activation.py'
+      - name: Verify backup, restore, activation and deployment scripts
+        run: python -m unittest discover -s scripts/tests
       - name: Validate Docker Compose
         env:
           POSTGRES_PASSWORD: test-only-password
@@ -36,3 +36,14 @@ jobs:
           JWT_SECRET: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
           BASE_DOMAIN: example.invalid
         run: docker compose -f compose.yaml config --quiet
+
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Test the real PostgreSQL and WebSocket stack
+        run: bash scripts/run-stage12-real.sh
