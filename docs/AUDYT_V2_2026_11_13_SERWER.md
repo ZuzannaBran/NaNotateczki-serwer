@@ -84,6 +84,9 @@ Sama blokada przycisku w UI nie wystarcza.
 - Publiczne odczyty `app.nanotateczki.pl` i `api.nanotateczki.pl` zwróciły
   z tego środowiska HTTP 403. Ten wynik nie potwierdza dostępności nowej
   aplikacji dla użytkownika; wymaga sprawdzenia reguł dostępu i wersji klienta.
+  Lokalny Caddy odpowiada 200 dla hosta API, ale 404 dla hosta aplikacji;
+  `web-dist/` jest pusty. Nie potwierdzono wdrożenia klienta pod publiczną
+  domeną Cloudflare. CI buduje osobny pakiet `nanotateczki-cloudflare-upload`.
 - Backup ma istniejące limity 64 MiB i 100000 zdarzeń. Nie potwierdzono
   produkcyjnej polityki kompaktacji/retencji dla większej historii.
 
@@ -99,9 +102,23 @@ Sama blokada przycisku w UI nie wystarcza.
   scenariusze zaliczono osobno na rzeczywistym PostgreSQL (19 PASS).
 - Format 303 plików Dart: bez zmian po formatowaniu. Pełny lokalny Flutter
   przerwano po błędzie brakującego `pdftoppm`, aby nie przeciążać serwera.
-  Nie jest to zielony wynik pełnej macierzy ani zakończona analiza Darta.
-- Nowe pełne CI jest uruchamiane przez jawne markery obu repozytoriów.
-  Oczekujące zadania nie są wynikiem PASS.
+  Nie jest to zielony wynik pełnej macierzy lokalnej.
+  Końcowe `dart analyze`: **No issues found**.
+- Backup pustej instalacji odtworzono na osobnym PostgreSQL bez sieci:
+  **PASS**, 16 migracji i 0 kont. Tymczasowe archiwum usunięto po teście.
+  To nie zastępuje odtworzenia wartościowych dokumentów i niepustych assetów.
+- Nowe pełne CI aplikacji: **17/17 PASS**, w tym rzeczywiste kontrolery,
+  dwa procesy klientów, Web/IndexedDB oraz Linux, Windows, macOS, Android
+  i symulatory iPhone/iPad. [Przebieg 43506142741](https://github.com/ZuzannaBran/NaNotateczki/actions/runs/43506142741)
+  sprawdził kod `c15d2f90`.
+- Dodatkowy [CI planera](https://github.com/ZuzannaBran/NaNotateczki/actions/runs/43506142672): **PASS**.
+- [Pełny CI backendu](https://github.com/ZuzannaBran/NaNotateczki-serwer/actions/runs/43505717211):
+  **PASS**, kod `04073d5`. Oba commity opublikowano przez połączoną integrację
+  GitHub; lokalne gałęzie `dev`/`main` są z nimi zsynchronizowane.
+
+Zielone CI nie usuwa opisanych wyżej otwartych zachowań protokołu.
+Nie zaliczono pełnego pakietu 2, fizycznej akceptacji ani globalnego rollout.
+Późniejszy commit aktualizuje wyłącznie ten raport, bez zmiany testowanego kodu.
 
 Pełny reset nie tworzy nowej kopii danych, zgodnie z poleceniem usunięcia
 wszystkich śladów użytkowników. Kod i konfiguracja instalacji pozostają.
