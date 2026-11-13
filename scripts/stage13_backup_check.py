@@ -143,12 +143,55 @@ def check_backup(directory: Path, asset_restore: Path | None = None) -> dict:
     return {"asset_files": files, "asset_bytes": size}
 
 
+
+def check_restored_assets(root: Path, inventory: Path) -> int:
+    """Verify every PostgreSQL asset receipt against the restored file."""
+    count = 0
+    with inventory.open(encoding="ascii") as rows:
+        for raw in rows:
+            fields = raw.rstrip("\n").split("|")
+            if len(fields) != 3:
+                raise BackupError("Invalid restored asset inventory row")
+            owner, digest, size = fields
+            if (
+                not re.fullmatch(
+                    r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", owner,
+                )
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or not re.fullmatch(r"[1-9][0-9]{0,18}", size)
+            ):
+                raise BackupError("Invalid restored asset receipt")
+            file = root / "data" / "assets-v2" / owner / digest[:2] / digest
+            if not file.is_file() or file.is_symlink() or file.stat().st_size != int(size):
+                raise BackupError("Restored asset missing or has the wrong size")
+            checksum = hashlib.sha256()
+            with file.open("rb") as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    checksum.update(chunk)
+            if checksum.hexdigest() != digest:
+                raise BackupError("Restored asset SHA-256 mismatch")
+            count += 1
+    return count
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("backup_dir", type=Path)
+    parser.add_argument("backup_dir", type=Path, nargs="?")
     parser.add_argument("--restore-assets", type=Path)
+    parser.add_argument("--verify-inventory", type=Path)
+    parser.add_argument("--asset-root", type=Path)
     args = parser.parse_args()
+    if (args.verify_inventory is None) != (args.asset_root is None):
+        parser.error("--verify-inventory and --asset-root must be provided together")
+    if args.verify_inventory is None and args.backup_dir is None:
+        parser.error("backup_dir is required when not checking a restored inventory")
+    if args.verify_inventory is not None and (args.backup_dir or args.restore_assets):
+        parser.error("inventory checks run after archive extraction and database restore")
     try:
+        if args.verify_inventory is not None:
+            count = check_restored_assets(args.asset_root, args.verify_inventory)
+            print(f"RESTORED ASSET RECEIPTS VERIFIED: {count}")
+            return 0
         summary = check_backup(args.backup_dir, args.restore_assets)
     except (BackupError, OSError, UnicodeError, tarfile.TarError) as exc:
         print(f"BACKUP INVALID: {exc}", file=sys.stderr)

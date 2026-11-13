@@ -454,19 +454,19 @@ async def get_legacy_source(
     )
     if record is None or record.revision < revision:
         raise HTTPException(status_code=404, detail="Legacy revision not covered.")
-    if record.revision == revision and record.deleted_at is None:
-        return {"revision": revision, "notebook": record.content}
+    if record.revision == revision:
+        return {"revision": revision, "notebook": record.content,
+                "deleted": record.deleted_at is not None}
     event = await session.scalar(
         select(ChangeEvent).where(
             ChangeEvent.owner_id == principal.owner_id,
             ChangeEvent.entity_uid == uid,
             ChangeEvent.revision == revision,
-            ChangeEvent.deleted.is_(False),
         ).order_by(ChangeEvent.id.desc()).limit(1)
     )
-    if event is None or event.content is None:
+    if event is None or (event.content is None and not event.deleted):
         raise HTTPException(status_code=404, detail="Legacy revision not covered.")
-    return {"revision": revision, "notebook": event.content}
+    return {"revision": revision, "notebook": event.content, "deleted": event.deleted}
 
 
 @router.get("/activation/legacy-library")

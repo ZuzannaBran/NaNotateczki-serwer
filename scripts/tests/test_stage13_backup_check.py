@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from stage13_backup_check import BackupError, check_backup
+from stage13_backup_check import BackupError, check_backup, check_restored_assets
 
 
 class BackupCheckTest(unittest.TestCase):
@@ -54,6 +54,22 @@ class BackupCheckTest(unittest.TestCase):
         summary = check_backup(self.backup, target)
         self.assertEqual(summary["asset_files"], 1)
         self.assertEqual((target / "data/backups/a.json").read_bytes(), b"hello")
+
+    def test_restored_postgres_asset_receipts_verify_actual_bytes(self):
+        owner = "a0877404-2793-4d75-8a6b-4fcfdbca71d1"
+        data = b"media"
+        digest = hashlib.sha256(data).hexdigest()
+        inventory = self.root / "inventory.txt"
+        inventory.write_text(f"{owner}|{digest}|{len(data)}\n")
+        asset = self.root / "data" / "assets-v2" / owner / digest[:2] / digest
+        with self.assertRaisesRegex(BackupError, "missing"):
+            check_restored_assets(self.root, inventory)
+        asset.parent.mkdir(parents=True)
+        asset.write_bytes(data)
+        self.assertEqual(check_restored_assets(self.root, inventory), 1)
+        asset.write_bytes(b"other")
+        with self.assertRaisesRegex(BackupError, "SHA-256"):
+            check_restored_assets(self.root, inventory)
 
     def test_archive_checksum_is_required(self):
         with (self.backup / "postgres.dump").open("ab") as stream:

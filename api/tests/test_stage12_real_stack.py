@@ -885,6 +885,14 @@ def test_historical_account_cutover_is_atomic_scoped_and_idempotent(client):
     assert client.get(
         "/v2/activation/legacy-source", params=historical, headers=headers(other),
     ).status_code == 404
+    deleted_archive = client.get(
+        "/v2/activation/legacy-source",
+        params={"uid": dead, "revision": 2},
+        headers=auth,
+    )
+    assert deleted_archive.json() == {
+        "revision": 2, "notebook": None, "deleted": True,
+    }
     assert client.get("/v2/activation/legacy-library", headers=auth).json() == {
         "library": library,
     }

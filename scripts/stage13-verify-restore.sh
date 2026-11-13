@@ -55,4 +55,13 @@ docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres \
 docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres \
   -d nn_stage13_restore -c \
   "SELECT name, checksum FROM schema_migrations ORDER BY name;"
+# Compare the restored SQL receipts with actual bytes, not only tar metadata.
+if [[ "$(docker exec "$container" psql -X -At -v ON_ERROR_STOP=1 -U postgres \
+  -d nn_stage13_restore -c "SELECT to_regclass('public.verified_assets') IS NOT NULL;")" == t ]]; then
+  docker exec "$container" psql -X -At -v ON_ERROR_STOP=1 -U postgres \
+    -d nn_stage13_restore -c "SELECT owner_id, sha256, size_bytes FROM verified_assets;" \
+    > "$work/asset-inventory.txt"
+  python3 "$root/scripts/stage13_backup_check.py" \
+    --verify-inventory "$work/asset-inventory.txt" --asset-root "$work/assets"
+fi
 echo "STAGE 13 RESTORE PASS: isolated PostgreSQL and restored asset archive"
