@@ -1,1 +1,1 @@
-package8-activation-readiness-full-backend-verification-2026-11-12
+package8-2026-11-13-backend-verification-after-ci-fixes
