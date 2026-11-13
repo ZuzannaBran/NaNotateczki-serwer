@@ -359,6 +359,13 @@ def test_v2_planner_and_backup_use_activated_account(client):
     planner = client.get("/v2/planner/entries", headers=headers(token)).json()
     assert planner["entries"][0]["revision"] == 1
     assert planner["entries"][0]["id"] == entry_id
+    removed = client.put(f"/v2/planner/entries/{entry_id}",
+                         headers=headers(token), json={
+                             "operationId": str(uuid.uuid4()),
+                             "expectedRevision": 1, "deleted": True,
+                         })
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["deleted"] is True and removed.json()["entry"] is None
 
     document, _, _, _ = initial_document(client, token)
     history = feed(client, token)
@@ -366,7 +373,9 @@ def test_v2_planner_and_backup_use_activated_account(client):
     device_id = str(uuid.uuid4())
     payload = {
         "notebooks": [], "operationHistory": history, "assetBlobs": {},
-        "libraryState": {}, "studyPlannerState": {"sessions": []},
+        "libraryState": {}, "studyPlannerState": {"sessions": [], "tombstones": {
+            entry_id: removed.json()["modifiedAt"],
+        }},
         "appPreferences": {}, "editorPreferences": {},
         "recentColors": [], "backupPreferences": {},
     }
@@ -410,6 +419,29 @@ def test_v2_planner_and_backup_use_activated_account(client):
     _, other = identity()
     assert client.get(f"/v2/backups/{backup_id}/download",
                       headers=headers(other)).status_code == 404
+
+
+def test_legacy_tombstones_keep_sql_null_content(client):
+    _, token = identity(v2=False)
+    uid = "legacy-delete-" + uuid.uuid4().hex
+    url = f"/v1/sync/notebooks/{uid}"
+    created = client.put(url, headers={
+        **headers(token), "Idempotency-Key": uuid.uuid4().hex,
+    }, json={"expectedRevision": 0, "notebook": {
+        "uid": uid, "title": "Legacy", "kind": 0, "folder": "",
+        "createdAt": "2026-11-13T11:00:00Z",
+        "updatedAt": "2026-11-13T11:00:00Z", "pages": [],
+    }})
+    assert created.status_code == 200, created.text
+    deleted = client.request("DELETE", url, headers={
+        **headers(token), "Idempotency-Key": uuid.uuid4().hex,
+    }, json={"expectedRevision": created.json()["revision"]})
+    assert deleted.status_code == 200, deleted.text
+    changes = client.get("/v1/sync/changes?after=0", headers=headers(token))
+    assert changes.status_code == 200, changes.text
+    tombstone = changes.json()["changes"][-1]
+    assert tombstone["uid"] == uid and tombstone["deleted"] is True
+    assert tombstone["notebook"] is None
 
 
 def test_1000_inserts_1000_deletes_and_idempotent_retries(client):

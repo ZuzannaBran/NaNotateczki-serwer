@@ -48,7 +48,7 @@ class SyncedNotebook(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     uid: Mapped[str] = mapped_column(String(128), nullable=False)
-    content: Mapped[dict | None] = mapped_column(JSONB)
+    content: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
@@ -66,7 +66,7 @@ class ChangeEvent(Base):
     entity_uid: Mapped[str] = mapped_column(String(128), nullable=False)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
     deleted: Mapped[bool] = mapped_column(nullable=False, default=False)
-    content: Mapped[dict | None] = mapped_column(JSONB)
+    content: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -178,7 +178,7 @@ class PlannerEntry(Base):
         primary_key=True,
     )
     uid: Mapped[str] = mapped_column(String(128), primary_key=True)
-    content: Mapped[dict | None] = mapped_column(JSONB)
+    content: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     modified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -216,7 +216,7 @@ class DocumentState(Base):
     )
     document_uid: Mapped[str] = mapped_column(String(128), primary_key=True)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    content: Mapped[dict | None] = mapped_column(JSONB)
+    content: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
