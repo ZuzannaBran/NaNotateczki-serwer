@@ -167,6 +167,7 @@ def apply_operation(
     tombstones: set[tuple[str, str, str]],
     *,
     verified_assets: frozenset[str] = frozenset(),
+    initial_image_receipt: str | None = None,
 ) -> tuple[dict | None, tuple[str, str, str] | None]:
     """Return updated projection and optional newly permanent tombstone.
 
@@ -556,7 +557,12 @@ def apply_operation(
         return current, None
     if "textAtoms" in node and ({"text", "delta"} & fields.keys()):
         raise ProjectionError("CRDT text cannot be replaced by object.set.")
-    if "assetId" in fields:
+    if "assetId" in fields and not (
+        kind == "object.create"
+        and fields.get("objectType") == "image"
+        and initial_image_receipt is not None
+        and fields["assetId"] == initial_image_receipt
+    ):
         if (
             node.get("type") != "object.create"
             or node.get("properties", {}).get("objectType") != "image"

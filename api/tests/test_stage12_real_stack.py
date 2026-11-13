@@ -787,3 +787,155 @@ def test_stale_page_delete_after_move_removes_visible_object(client):
     assert all(
         object_id not in page["objects"] for page in state["pages"].values()
     )
+
+
+def test_historical_account_cutover_is_atomic_scoped_and_idempotent(client):
+    import base64
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.legacy_cutover import migrate_account
+    from app.legacy_operation_plan import LegacyConversionError
+
+    owner, token = identity(v2=False)
+    _, other = identity()
+    auth = headers(token)
+    now = "2026-11-13T11:00:00Z"
+    uid = "cutover-" + owner.hex
+    dead = uid + "-deleted"
+    data = b"\x89PNG\r\n\x1a\nlegacy"
+    digest = hashlib.sha256(data).hexdigest()
+    formatted = {"id": "text-" + owner.hex, "text": "Ł😀",
+                 "deltaJson": json.dumps([
+                     {"insert": "Ł😀", "attributes": {"bold": True}},
+                     {"insert": "\n", "attributes": {"align": "center"}},
+                 ]), "fontSize": 18, "color": 0xff123456, "width": 140,
+                 "rotation": 0, "dx": 1, "dy": 2}
+    image = {"id": "img-" + owner.hex, "bytes": base64.b64encode(data).decode(),
+             "imageMime": "image/png", "width": 120, "height": 80, "dx": 1, "dy": 2}
+    ink = {"id": "old-ink", "tool": 0, "width": 2, "color": 0xff112233,
+           "points": [{"dx": 1, "dy": 2, "pressure": 0.5}]}
+
+    def put(doc, expected, pages):
+        return client.put(
+            f"/v1/sync/notebooks/{doc}",
+            headers={**auth, "Idempotency-Key": uuid.uuid4().hex},
+            json={"expectedRevision": expected, "notebook": {
+                "uid": doc, "title": "History", "kind": 0, "folder": "Notes/Sub",
+                "createdAt": now, "updatedAt": now, "pages": pages,
+            }},
+        )
+
+    page = {"id": "page-" + owner.hex, "title": "Kept", "isBookmarked": True,
+            "textBlocks": [formatted], "imageBlocks": [image], "inkStrokes": []}
+    old_page = {**page, "id": "old-page", "textBlocks": [], "imageBlocks": [],
+                "inkStrokes": [ink]}
+    assert put(uid, 0, [page, old_page]).status_code == 200
+    assert put(dead, 0, [page]).status_code == 200
+    deleted = client.request(
+        "DELETE", f"/v1/sync/notebooks/{dead}",
+        headers={**auth, "Idempotency-Key": uuid.uuid4().hex},
+        json={"expectedRevision": 1},
+    )
+    assert deleted.status_code == 200, deleted.text
+    library = {"folders": ["Notes/Sub"], "covers": {}, "plannerTasks": {
+        "planner-1": [{"id": "task-1", "title": "Complete", "completed": True}]
+    }, "recentCoverColors": []}
+    assert client.put("/v1/account-settings/libraryState", headers=auth, json={
+        "expectedRevision": 0, "value": library,
+    }).status_code == 200
+    assert client.put("/v1/account-settings/backupPreferences", headers=auth, json={
+        "expectedRevision": 0, "value": {"version": 1, "idleSeconds": 30},
+    }).status_code == 200
+
+    async def migrate(**kwargs):
+        engine = create_async_engine(os.environ["NN_STAGE12_FIXTURE_DATABASE_URL"])
+        try:
+            async with async_sessionmaker(engine).begin() as session:
+                return await migrate_account(session, owner, **kwargs)
+        finally:
+            await engine.dispose()
+
+    broken = {**page, "imageBlocks": [{**image, "bytes": None}]}
+    assert put(uid, 1, [broken]).status_code == 200
+    cursor = client.get("/v1/sync/bootstrap", headers=auth).json()["cursor"]
+    with pytest.raises(LegacyConversionError, match="inline bytes"):
+        asyncio.run(migrate(apply=True, expected_cursor=cursor))
+    assert client.get("/v1/auth/protocol", headers=auth).json() == {"protocol": "v1"}
+    assert put(uid, 2, [page]).status_code == 200
+    with pytest.raises(LegacyConversionError, match="cursor changed"):
+        asyncio.run(migrate(apply=True, expected_cursor=cursor))
+
+    report = asyncio.run(migrate())
+    assert report["status"] == "validated" and report["converted_documents"] == 2
+    assert client.get("/v2/activation/readiness", headers=auth).status_code == 409
+    activated = asyncio.run(migrate(apply=True, expected_cursor=report["legacy_cursor"]))
+    assert activated["operation_cursor"] > 0
+    assert asyncio.run(migrate(apply=True, expected_cursor=report["legacy_cursor"])) == {
+        **activated, "status": "already-activated",
+    }
+    ready = client.get("/v2/activation/readiness", headers=auth).json()
+    assert ready["legacyCutover"] == {
+        "legacyCursor": report["legacy_cursor"],
+        "operationCursor": activated["operation_cursor"],
+    }
+    assert client.get("/v1/sync/bootstrap", headers=auth).status_code == 409
+    assert put(uid, 3, [page]).status_code == 409
+    historical = {"uid": uid, "revision": 1}
+    archive = client.get("/v2/activation/legacy-source", params=historical, headers=auth)
+    assert archive.json()["notebook"]["pages"][1]["id"] == "old-page"
+    assert client.get(
+        "/v2/activation/legacy-source", params=historical, headers=headers(other),
+    ).status_code == 404
+    assert client.get("/v2/activation/legacy-library", headers=auth).json() == {
+        "library": library,
+    }
+    settings = client.get("/v2/account-settings", headers=auth).json()["settings"]
+    assert settings["backupPreferences"]["value"]["idleSeconds"] == 30
+    assert "libraryState" not in settings
+    feed = client.get("/v2/operations?after=0", headers=auth).json()
+    assert feed["cursor"] == activated["operation_cursor"]
+    events = [item["operation"] for item in feed["operations"]]
+    assert {item["type"] for item in events} >= {
+        "document.create", "document.delete", "page.delete", "object.delete",
+        "text.insert", "asset.attach", "folder.create", "task.create",
+    }
+    text_op = next(item for item in events if item["type"] == "text.insert")
+    assert "".join(item["text"] for item in text_op["payload"]["atoms"]) == "Ł😀\n"
+    assert text_op["payload"]["atoms"][0]["attributes"] == {"bold": True}
+    restored = client.get(f"/v2/assets/{digest}", headers=auth)
+    assert restored.content == data
+    assert client.get(f"/v2/assets/{digest}", headers=headers(other)).status_code == 404
+    rename = Actor(uid, "after-cutover", clock=100).next(
+        "document.set", payload={"properties": {"title": "After migration"}},
+    )
+    assert client.post("/v2/operations/batch", headers=auth,
+                       json={"operations": [rename]}).status_code == 200
+
+
+def test_image_create_and_verified_attachment_commit_as_one_batch(client):
+    owner, token = identity()
+    auth = headers(token)
+    uid, page, _, _ = initial_document(client, token)
+    actor = Actor(uid, "atomic-image-" + owner.hex, clock=2)
+    data = b"%PDF-1.7\natomic fixture"
+    digest = hashlib.sha256(data).hexdigest()
+    image_id = "image-" + owner.hex
+    create = actor.next(
+        "object.create", page=page, target=image_id,
+        payload={"value": {"objectType": "image", "assetId": image_id}},
+    )
+    attach = actor.next(
+        "asset.attach", page=page, target=image_id,
+        payload={"assetId": image_id, "sha256": digest,
+                 "sizeBytes": len(data), "mediaType": "application/pdf"},
+    )
+    endpoint = "/v2/operations/batch"
+    initial_cursor = client.get("/v2/sync/checkpoint", headers=auth).json()["cursor"]
+    for batch in ([create], [create, attach]):
+        rejected = client.post(endpoint, headers=auth, json={"operations": batch})
+        assert rejected.status_code == 422, rejected.text
+        assert client.get("/v2/sync/checkpoint", headers=auth).json()["cursor"] == initial_cursor
+    uploaded = client.put(f"/v2/assets/{digest}", headers=auth, content=data)
+    assert uploaded.status_code == 200, uploaded.text
+    accepted = client.post(endpoint, headers=auth, json={"operations": [create, attach]})
+    assert accepted.status_code == 200, accepted.text
+    assert [item["status"] for item in accepted.json()["acknowledgements"]] == ["applied"] * 2

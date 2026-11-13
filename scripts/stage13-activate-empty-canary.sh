@@ -42,7 +42,7 @@ BEGIN
       'study_shares', 'account_settings', 'planner_entries',
       'planner_entry_mutations', 'document_states', 'document_operations',
       'actor_checkpoints', 'object_tombstones', 'verified_assets',
-      'account_sync_protocol'
+      'account_sync_protocol', 'legacy_account_cutovers'
     );
   IF unknown_tables IS NOT NULL THEN
     RAISE EXCEPTION 'Unknown account tables: %', unknown_tables;
@@ -55,6 +55,9 @@ FROM users
 WHERE users.id = :'owner_id'::uuid
   AND NOT EXISTS (
       SELECT 1 FROM account_sync_protocol m WHERE m.owner_id = users.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM legacy_account_cutovers c WHERE c.owner_id = users.id
   )
   AND NOT EXISTS (
       SELECT 1 FROM synced_notebooks n WHERE n.owner_id = users.id

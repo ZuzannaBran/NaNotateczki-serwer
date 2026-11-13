@@ -92,6 +92,17 @@ class ReadinessSession(ProtocolSession):
         self.legacy = legacy
 
     async def execute(self, query, params):
+        if "legacy_account_cutovers" in str(query):
+            self.queries += 1
+
+            class EmptyResult:
+                def mappings(self):
+                    return self
+
+                def one_or_none(self):
+                    return None
+
+            return EmptyResult()
         if "synced_notebooks" not in str(query):
             return await super().execute(query, params)
         self.queries += 1
@@ -116,7 +127,7 @@ def test_activation_readiness_rejects_v1_and_unconverted_v2():
         assert error.value.status_code == 409
     verified = ReadinessSession("v2")
     asyncio.run(require_v2_activation_ready(verified, owner))
-    assert verified.queries == 2
+    assert verified.queries == 3
 
 
 def test_activation_endpoint_requires_marker_and_canary_allowlist(monkeypatch):

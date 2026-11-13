@@ -140,15 +140,21 @@ Konto bez wiersza działa wyłącznie na starym zapisie v1; sam
 `OPERATIONS_V2_WRITE_MODE=canary` **nie wystarcza** do włączenia v2.
 Pusty, nowy właściciel testowy może zostać aktywowany jedynie podczas
 wyłączenia API przez `scripts/stage13-activate-empty-canary.sh`.
-Istniejące konta potrzebują bezstratnej migracji i nadal nie wolno ich
-przełączać. Użyj procedury w `docs/STAGE13_PRODUCTION_ROLLOUT_PL.md`.
+Dla istniejącego konta dostępny jest administracyjny dry-run
+`python -m app.legacy_cutover UUID` z katalogu `api/` po zastosowaniu
+migracji 0015. Apply wymaga uprawnień do markera protokołu, zgodnego
+`--expect-v1-cursor`, jawnej allowlisty v2 i
+`--all-v1-devices-flushed`. Najpierw użyj odizolowanej kopii bazy i
+assetów. Zmiany v1 i stary backup nie są usuwane. Nie zastępuj tej
+procedury resetem produkcyjnego konta.
 
 ## Etap 13 — wdrożenie produkcyjne (jeszcze zablokowane)
 
 Procedura, bezpieczna flaga canary, test odtworzenia PostgreSQL+assetów
 oraz monitoring: [docs/STAGE13_PRODUCTION_ROLLOUT_PL.md](docs/STAGE13_PRODUCTION_ROLLOUT_PL.md).
 Domyślnie `OPERATIONS_V2_WRITE_MODE=disabled`; nie przełączać istniejących
-kont, dopóki etap 11 nie ma aktywnego cutover, a etap 12 zaliczonych E2E.
+kont przed akceptacją E2E na kopii z rzeczywistą historią oraz
+testem odtworzenia kopii bazy i assetów.
 Lokalna walidacja archiwum bez Dockera:
 
 ```bash

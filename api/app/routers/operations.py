@@ -13,10 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_protocol import require_v2_activation_ready, require_v2_protocol
+from ..account_protocol import (
+    legacy_cutover_receipt, require_v2_activation_ready, require_v2_protocol,
+)
 from ..database import database_session
 from ..models import (
-    ActorCheckpoint, DocumentOperation, DocumentState, ObjectTombstone,
+    AccountSettings, ActorCheckpoint, ChangeEvent, DocumentOperation, DocumentState, ObjectTombstone,
     StudyShare, StudyShareGrant, SyncedNotebook, User, VerifiedAsset,
 )
 from ..asset_store import asset_path, valid_verified_file
@@ -163,6 +165,8 @@ def ensure_actor_binding(
 
 async def apply_one(
     session: AsyncSession, principal: Principal, op: OperationEnvelope,
+    *, converting_legacy: bool = False,
+    initial_image_receipt: str | None = None,
 ) -> dict | None:
     """Apply when causal prerequisites exist, else return None for retry."""
     owner_id = principal.owner_id
@@ -288,14 +292,14 @@ async def apply_one(
 
     # Prevent dual writers: stage-11 migration must explicitly convert v1
     # notebook state before any operation edits that UID.
-    if op.document_id != LIBRARY_DOCUMENT_ID:
+    if not converting_legacy and op.document_id != LIBRARY_DOCUMENT_ID:
         legacy = await session.scalar(
             select(SyncedNotebook.id).where(
                 SyncedNotebook.owner_id == owner_id,
                 SyncedNotebook.uid == op.document_id,
             )
         )
-        if legacy is not None:
+        if legacy is not None and await legacy_cutover_receipt(session, owner_id) is None:
             raise HTTPException(
                 status_code=409,
                 detail="Legacy document requires stage-11 migration.",
@@ -337,7 +341,8 @@ async def apply_one(
                 verified = frozenset({digest})
     try:
         projected, tombstone = apply_operation(
-            before, op, tombstones, verified_assets=verified
+            before, op, tombstones, verified_assets=verified,
+            initial_image_receipt=initial_image_receipt,
         )
     except ProjectionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -418,9 +423,63 @@ async def get_activation_readiness(
     principal = await authorize(session, authorization, None)
     if principal.kind != "owner":
         raise HTTPException(status_code=403, detail="Account owner required.")
-    await require_v2_activation_ready(session, principal.owner_id)
+    receipt = await require_v2_activation_ready(session, principal.owner_id)
     require_operations_v2_write(principal.owner_id)
-    return {"protocol": "v2", "writeEnabled": True, "version": 1}
+    response = {"protocol": "v2", "writeEnabled": True, "version": 1}
+    if receipt is not None:
+        response["legacyCutover"] = {
+            "legacyCursor": receipt["legacy_cursor"],
+            "operationCursor": receipt["operation_cursor"],
+        }
+    return response
+
+
+@router.get("/activation/legacy-source")
+async def get_legacy_source(
+    uid: str = Query(min_length=1, max_length=128),
+    revision: int = Query(ge=1, le=MAX_SAFE_INTEGER),
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    """Prove a device's v1 projection is covered before moving it aside."""
+    principal = await authorize(session, authorization, None)
+    require_operations_v2_write(principal.owner_id)
+    if await require_v2_activation_ready(session, principal.owner_id) is None:
+        raise HTTPException(status_code=404, detail="No historical cutover.")
+    record = await session.scalar(
+        select(SyncedNotebook).where(
+            SyncedNotebook.owner_id == principal.owner_id,
+            SyncedNotebook.uid == uid,
+        )
+    )
+    if record is None or record.revision < revision:
+        raise HTTPException(status_code=404, detail="Legacy revision not covered.")
+    if record.revision == revision and record.deleted_at is None:
+        return {"revision": revision, "notebook": record.content}
+    event = await session.scalar(
+        select(ChangeEvent).where(
+            ChangeEvent.owner_id == principal.owner_id,
+            ChangeEvent.entity_uid == uid,
+            ChangeEvent.revision == revision,
+            ChangeEvent.deleted.is_(False),
+        ).order_by(ChangeEvent.id.desc()).limit(1)
+    )
+    if event is None or event.content is None:
+        raise HTTPException(status_code=404, detail="Legacy revision not covered.")
+    return {"revision": revision, "notebook": event.content}
+
+
+@router.get("/activation/legacy-library")
+async def get_legacy_library(
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(database_session),
+) -> dict:
+    principal = await authorize(session, authorization, None)
+    require_operations_v2_write(principal.owner_id)
+    if await require_v2_activation_ready(session, principal.owner_id) is None:
+        raise HTTPException(status_code=404, detail="No historical cutover.")
+    row = await session.get(AccountSettings, (principal.owner_id, "libraryState"))
+    return {"library": row.content if row is not None else None}
 
 
 @router.post("/operations/batch")
@@ -440,6 +499,8 @@ async def post_batch(
         except InvalidOperation as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         validate_target(op, principal)
+        if op.actor_id.startswith("v1-cutover:"):
+            raise HTTPException(status_code=422, detail="Reserved migration actor.")
         if op.operation_id in seen:
             raise HTTPException(status_code=422, detail="Duplicate in batch.")
         seen.add(op.operation_id)
@@ -454,12 +515,32 @@ async def post_batch(
     await session.execute(text("SELECT pg_advisory_xact_lock(681246731)"))
     await check_share_lock(session, principal)
     pending = {op.operation_id: op for op in operations}
+    # A new image's asset binding is valid only if the matching receipt
+    # follows its creation in this same atomic transaction.
+    image_receipts = {}
+    for op in operations:
+        if op.kind == "asset.attach":
+            payload = op.payload
+            asset = payload.get("assetId")
+            if isinstance(asset, str):
+                for dependency in op.dependencies:
+                    create = pending.get(dependency)
+                    if (create is not None and create.kind == "object.create"
+                            and create.document_id == op.document_id
+                            and create.page_id == op.page_id
+                            and create.object_id == op.object_id
+                            and create.actor_id == op.actor_id
+                            and create.actor_seq + 1 == op.actor_seq):
+                        image_receipts[dependency] = asset
     acknowledgements: dict[str, dict] = {}
     changed_docs: set[str] = set()
     while pending:
         progressed = False
         for op in sorted(pending.values(), key=precedence):
-            ack = await apply_one(session, principal, op)
+            ack = await apply_one(
+                session, principal, op,
+                initial_image_receipt=image_receipts.get(op.operation_id),
+            )
             if ack is None:
                 continue
             acknowledgements[op.operation_id] = ack

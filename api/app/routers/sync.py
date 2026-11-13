@@ -102,6 +102,7 @@ async def bootstrap(
     session: AsyncSession = Depends(database_session),
     after: str = Query(default="", max_length=128),
 ) -> dict:
+    await require_legacy_protocol(session, user.id)
     # Capture cursor before the first page; concurrent writes are replayed
     # via /changes after bootstrap, including earlier alphabetical UIDs.
     cursor = await session.scalar(
@@ -129,6 +130,7 @@ async def changes(
     user: User = Depends(current_user),
     session: AsyncSession = Depends(database_session),
 ) -> dict:
+    await require_legacy_protocol(session, user.id)
     result = await session.execute(
         select(ChangeEvent)
         .where(ChangeEvent.owner_id == user.id, ChangeEvent.id > after)

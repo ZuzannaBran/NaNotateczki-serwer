@@ -80,6 +80,7 @@ class CanaryActivationTest(unittest.TestCase):
             "planner_entries", "planner_entry_mutations",
             "actor_checkpoints", "object_tombstones",
             "study_shares", "idempotency_records", "verified_assets",
+            "legacy_account_cutovers",
         ):
             self.assertIn("FROM " + table, body)
         self.assertIn("Unknown account tables", body)

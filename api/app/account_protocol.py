@@ -42,11 +42,26 @@ async def require_v2_protocol(
             detail="Account has not completed operation protocol cutover.",
         )
 
+async def legacy_cutover_receipt(
+    session: AsyncSession, owner_id: uuid.UUID,
+) -> dict | None:
+    result = await session.execute(
+        text("""SELECT legacy_cursor, operation_cursor, converted_documents
+                FROM legacy_account_cutovers WHERE owner_id = :owner_id"""),
+        {"owner_id": owner_id},
+    )
+    row = result.mappings().one_or_none()
+    return dict(row) if row is not None else None
+
+
 async def require_v2_activation_ready(
     session: AsyncSession, owner_id: uuid.UUID,
-) -> None:
-    """Block a v2 writer if unconverted v1 state is still present."""
+) -> dict | None:
+    """Block v2 startup unless historical state has a durable receipt."""
     await require_v2_protocol(session, owner_id)
+    receipt = await legacy_cutover_receipt(session, owner_id)
+    if receipt is not None:
+        return receipt
     result = await session.execute(
         text("""
             SELECT (
