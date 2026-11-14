@@ -15,8 +15,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.database import database_session
 from app.main import app
 from app.models import (
-    ChangeEvent, DocumentState, StudyShare, StudyShareGrant,
-    SyncedNotebook, User,
+    DocumentState, StudyShare, StudyShareGrant, User,
 )
 from app.realtime_hub import RealtimeHub
 from app.routers import study_shares as shares
@@ -80,12 +79,6 @@ class MemorySession:
                  and share.expires_at > datetime.now(UTC)),
                 None,
             )
-        if entity is ChangeEvent:
-            return next((
-                copy.deepcopy(snapshot)
-                for (owner, uid, revision), snapshot in self.history.items()
-                if owner in params and uid in params and revision in params
-            ), None)
         if entity is StudyShareGrant:
             return next(
                 (grant for grant in self.grants.values()
@@ -110,9 +103,6 @@ class MemorySession:
                     )
         elif isinstance(model, StudyShareGrant):
             self.grants[model.id] = model
-        elif isinstance(model, ChangeEvent):
-            model.id = len(self.events) + 1
-            self.events.append(model)
         else:
             raise AssertionError(f"Unexpected INSERT on {type(model)}")
 

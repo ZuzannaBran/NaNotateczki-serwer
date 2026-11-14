@@ -50,7 +50,7 @@ Przed uruchomieniem nowej wersji API wykonaj wszystkie migracje, w tym
 `0002_auth_version.sql` oraz `0003_username.sql`. Migracja nadaje istniejącym
 kontom login z unikalnej części e-maila lub identyfikatora konta. Rejestracja i nowe hasło przy zmianie wymagają 8–128
 znaków; logowanie nadal akceptuje istniejące hasła 1–256 znaków. Endpoint
-`POST /v1/auth/change-password` wymaga tokenu Bearer oraz JSON z
+`POST /v2/auth/change-password` wymaga tokenu Bearer oraz JSON z
 `currentPassword` i `newPassword`. Sukces
 zwraca `204` bez treści i unieważnia wszystkie dotychczasowe tokeny konta oraz
 połączenia WebSocket. Stary token odświeżania nie unieważni sesji utworzonej
@@ -135,11 +135,11 @@ public Caddy files. The host may revoke the session at any time.
 
 Cloudflare Tunnel: existing app and api hostnames both route to Caddy :8080.
 Enable WebSockets in Cloudflare Network settings. Never open router ports.
-Disable caching for /v1/study-shares/* and authenticated API responses.
+Disable caching for /v2/study-shares/* and authenticated API responses.
 The browser must be rebuilt with BACKEND_URL set to the public HTTPS API.
 
 A host sees a warning five minutes before expiration; POST
-`/v1/study-shares/{id}/extend` is allowed only in the last 15 minutes,
+`/v2/study-shares/{id}/extend` is allowed only in the last 15 minutes,
 extends the session by four hours and keeps existing guest tickets valid.
 The same link and password remain active. Guests receive an `extended`
 WebSocket event. No guest can extend a session.
@@ -157,7 +157,7 @@ przed utworzeniem oraz zakończeniem sesji; gdy są błędy lub oczekujące
 zmiany, nie może pokazać powodzenia zapisu na koncie.
 
 A shared session's host publishes its current dark/light mode and editor
-background style/spacing through authenticated `PUT /v1/study-shares/{id}/appearance`.
+background style/spacing through authenticated `PUT /v2/study-shares/{id}/appearance`.
 Guest `GET /document` returns this state, and an `appearance_changed` WebSocket
 event requests a refresh without changing document revisions or creating a
 new notebook. The validated appearance is stored in the existing

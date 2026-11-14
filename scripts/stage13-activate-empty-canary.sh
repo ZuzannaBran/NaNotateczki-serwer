@@ -38,11 +38,10 @@ BEGIN
   WHERE c.table_schema = 'public' AND c.column_name = 'owner_id'
     AND c.table_name NOT IN (
       'refresh_sessions', 'devices', 'device_backups',
-      'synced_notebooks', 'change_events', 'idempotency_records',
       'study_shares', 'account_settings', 'planner_entries',
       'planner_entry_mutations', 'document_states', 'document_operations',
       'actor_checkpoints', 'object_tombstones', 'verified_assets',
-      'account_sync_protocol', 'legacy_account_cutovers'
+      'account_sync_protocol'
     );
   IF unknown_tables IS NOT NULL THEN
     RAISE EXCEPTION 'Unknown account tables: %', unknown_tables;
@@ -55,12 +54,6 @@ FROM users
 WHERE users.id = :'owner_id'::uuid
   AND NOT EXISTS (
       SELECT 1 FROM account_sync_protocol m WHERE m.owner_id = users.id
-  )
-  AND NOT EXISTS (
-      SELECT 1 FROM legacy_account_cutovers c WHERE c.owner_id = users.id
-  )
-  AND NOT EXISTS (
-      SELECT 1 FROM synced_notebooks n WHERE n.owner_id = users.id
   )
   AND NOT EXISTS (
       SELECT 1 FROM document_states s WHERE s.owner_id = users.id
@@ -78,9 +71,6 @@ WHERE users.id = :'owner_id'::uuid
       SELECT 1 FROM verified_assets a WHERE a.owner_id = users.id
   )
   AND NOT EXISTS (
-      SELECT 1 FROM change_events e WHERE e.owner_id = users.id
-  )
-  AND NOT EXISTS (
       SELECT 1 FROM device_backups b WHERE b.owner_id = users.id
   )
   AND NOT EXISTS (
@@ -94,9 +84,6 @@ WHERE users.id = :'owner_id'::uuid
   )
   AND NOT EXISTS (
       SELECT 1 FROM study_shares s WHERE s.owner_id = users.id
-  )
-  AND NOT EXISTS (
-      SELECT 1 FROM idempotency_records i WHERE i.owner_id = users.id
   )
 RETURNING owner_id;
 COMMIT;

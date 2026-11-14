@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+import hashlib
+import json
 import re
 from typing import Any
 
@@ -347,7 +349,20 @@ def apply_operation(
     if kind.startswith("page."):
         key = ("page", "", op.object_id or "")
         if is_delete:
-            pages.pop(op.object_id, None)
+            removed = pages.pop(op.object_id, None)
+            if removed is not None and not pages:
+                deleted_ids = sorted({op.object_id} | {
+                    uid for target, _, uid in tombstones if target == "page"
+                })
+                identity = json.dumps(
+                    [op.document_id, deleted_ids],
+                    ensure_ascii=False, separators=(",", ":"),
+                )
+                replacement = "empty-" + hashlib.sha256(identity.encode()).hexdigest()
+                node = _new_node()
+                node["properties"] = {"title": "Page 1", "isBookmarked": False}
+                node["objects"] = {}
+                pages[replacement] = node
             return current, key if key not in tombstones else None
         if key in tombstones:
             if is_create:

@@ -85,7 +85,7 @@ testowym użytkowniku w izolowanej bazie i pełny test Flutter E2E.
 
 ## Sonda kompatybilności starego klienta
 
-API udostępnia uwierzytelnione `GET /v1/auth/protocol` zwracające
+API udostępnia uwierzytelnione `GET /v2/auth/protocol` zwracające
 `{"protocol":"v1"}` albo `{"protocol":"v2"}`.
 Zaktualizowany klient Flutter sprawdza protokół **przed** recovery,
 synchronizacją snapshotów i uruchomieniem backupu v1. Konto v2 jest

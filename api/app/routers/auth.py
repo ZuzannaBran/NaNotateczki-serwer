@@ -30,7 +30,7 @@ from ..security import (
 from ..settings import get_settings
 
 
-router = APIRouter(prefix="/v1/auth", tags=["auth"])
+router = APIRouter(prefix="/v2/auth", tags=["auth"])
 
 
 def session_response(user: User, refresh_token: str) -> dict:

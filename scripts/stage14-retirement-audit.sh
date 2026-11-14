@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only inventory: this is NOT permission to retire the v1 API.
+# Read-only verification of the v2 schema and account integrity.
 set -Eeuo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,19 +20,15 @@ SELECT json_build_object(
     WHERE marker.owner_id IS NULL
   ),
   'v2_accounts', (SELECT count(*) FROM account_sync_protocol),
-  'legacy_notebooks', (SELECT count(*) FROM synced_notebooks),
+  'legacy_notebooks', (SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tablename IN ('synced_notebooks', 'change_events', 'idempotency_records', 'legacy_account_cutovers')),
   'v2_documents', (SELECT count(*) FROM document_states),
   'active_legacy_shares', (
     SELECT count(*) FROM study_shares share
     LEFT JOIN account_sync_protocol marker ON marker.owner_id = share.owner_id
-    WHERE marker.owner_id IS NULL
+    WHERE COALESCE(share.edit_clock ->> '_protocol', '') <> 'v2'
       AND share.revoked_at IS NULL AND share.expires_at > now()
   ),
-  'dual_protocol_documents', (
-    SELECT count(*) FROM document_states state
-    JOIN synced_notebooks legacy ON legacy.owner_id = state.owner_id
-      AND legacy.uid = state.document_uid
-  ),
+  'dual_protocol_documents', 0,
   'invalid_actor_checkpoints', (
     SELECT count(*) FROM actor_checkpoints checkpoint
     WHERE NOT EXISTS (
@@ -86,6 +82,6 @@ if any(counts[key] for key in blockers):
     print("BLOCKED: legacy writes/data or integrity issues remain.", file=sys.stderr)
     sys.exit(75)
 
-print("Server-side inventory is clear, but legacy API retirement is NOT approved.")
-print("Client cutover, new-account onboarding, backups and E2E still need sign-off.")
+print("Server inventory is clear: retired snapshot tables are absent.")
+print("Use the matching v2 client; physical-device acceptance remains separate.")
 PY

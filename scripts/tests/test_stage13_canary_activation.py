@@ -75,12 +75,11 @@ class CanaryActivationTest(unittest.TestCase):
     def test_sql_filters_all_legacy_material_and_settings(self):
         body = SCRIPT.read_text()
         for table in (
-            "synced_notebooks", "document_states", "document_operations",
-            "change_events", "device_backups", "account_settings",
+            "document_states", "document_operations",
+            "device_backups", "account_settings",
             "planner_entries", "planner_entry_mutations",
             "actor_checkpoints", "object_tombstones",
-            "study_shares", "idempotency_records", "verified_assets",
-            "legacy_account_cutovers",
+            "study_shares", "verified_assets",
         ):
             self.assertIn("FROM " + table, body)
         self.assertIn("Unknown account tables", body)

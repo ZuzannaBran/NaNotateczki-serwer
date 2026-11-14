@@ -17,7 +17,7 @@ from ..rate_limit import InMemoryRateLimiter
 from ..security import current_user
 from ..settings import get_settings
 
-router = APIRouter(prefix="/v1/reports", tags=["reports"])
+router = APIRouter(prefix="/v2/reports", tags=["reports"])
 _write_lock = asyncio.Lock()
 _feedback_limiter = InMemoryRateLimiter(attempts=10, window_seconds=3600)
 SystemName = Literal["Linux", "Web", "Android", "iOS", "macOS", "Windows", "Other"]

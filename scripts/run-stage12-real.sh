@@ -50,6 +50,28 @@ VALUES ('00000000-0000-4000-8000-000000000018',
         '00000000-0000-4000-8000-000000000017', 'legacy-deletion', 1, now());
 SQL
   fi
+  if [[ "${migration##*/}" == "0017_remove_snapshot_protocol.sql" ]]; then
+    # Retirement must reject historical data and roll back without losing users.
+    if { echo 'BEGIN;'; cat "$migration"; echo 'ROLLBACK;'; } | \
+      "${compose[@]}" exec -T db psql -q -v ON_ERROR_STOP=1 \
+        -U stage12_admin -d nanotateczki_stage12_test > "$work/retirement-guard.log" 2>&1; then
+      echo 'Retirement unexpectedly accepted snapshot data.' >&2
+      exit 1
+    fi
+    grep -q 'Snapshot data remains' "$work/retirement-guard.log"
+    "${compose[@]}" exec -T db psql -q -v ON_ERROR_STOP=1 \
+      -U stage12_admin -d nanotateczki_stage12_test <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM users WHERE username = 's12_archived_legacy')
+     OR NOT EXISTS (SELECT 1 FROM synced_notebooks WHERE uid = 'legacy-deletion') THEN
+    RAISE EXCEPTION 'Failed retirement discarded historical data';
+  END IF;
+END $$;
+-- Explicit cleanup of the disposable historical fixture, never production.
+DELETE FROM users WHERE username = 's12_archived_legacy';
+SQL
+  fi
   echo "Applying isolated test migration: $(basename "$migration")"
   "${compose[@]}" exec -T db psql -q \
     -U stage12_admin -d nanotateczki_stage12_test \

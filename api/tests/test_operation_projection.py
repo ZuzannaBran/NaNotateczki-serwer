@@ -112,9 +112,14 @@ def test_document_tombstone_overrides_late_edits():
 def test_page_tombstone_suppresses_child_and_cannot_reuse_uid():
     state, deleted = seeded()
     state = apply(state, op(3, "page.delete", target="p"), deleted)
-    assert state["pages"] == {}
+    replacement = next(iter(state["pages"]))
+    assert replacement.startswith("empty-") and replacement != "p"
+    assert state["pages"][replacement]["objects"] == {}
     state = apply(state, op(4, "object.set", page="p", target="z"), deleted)
-    assert state["pages"] == {}
+    assert list(state["pages"]) == [replacement]
+    assert state["pages"][replacement]["objects"] == {}
+    repeated = apply(state, op(6, "page.delete", target="p"), deleted)
+    assert repeated == state
     with pytest.raises(ProjectionError, match="deleted"):
         apply(state, op(5, "page.create", target="p"), deleted)
 

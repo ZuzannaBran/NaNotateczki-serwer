@@ -65,11 +65,10 @@ BEGIN
     AND c.column_name = 'owner_id'
     AND c.table_name NOT IN (
       'users', 'refresh_sessions', 'devices', 'device_backups',
-      'synced_notebooks', 'change_events', 'idempotency_records',
       'study_shares', 'account_settings', 'planner_entries',
       'planner_entry_mutations', 'document_states',
       'document_operations', 'actor_checkpoints', 'object_tombstones',
-      'account_sync_protocol', 'verified_assets', 'legacy_account_cutovers'
+      'account_sync_protocol', 'verified_assets'
     );
   IF unknown_tables IS NOT NULL THEN
     RAISE EXCEPTION 'Unknown account tables: %', unknown_tables;
@@ -77,15 +76,11 @@ BEGIN
 
   -- Children before parents; FK cascades handle share grants.
   DELETE FROM verified_assets WHERE owner_id = target;
-  DELETE FROM legacy_account_cutovers WHERE owner_id = target;
   DELETE FROM object_tombstones WHERE owner_id = target;
   DELETE FROM actor_checkpoints WHERE owner_id = target;
   DELETE FROM document_operations WHERE owner_id = target;
   DELETE FROM document_states WHERE owner_id = target;
   DELETE FROM study_shares WHERE owner_id = target;
-  DELETE FROM change_events WHERE owner_id = target;
-  DELETE FROM idempotency_records WHERE owner_id = target;
-  DELETE FROM synced_notebooks WHERE owner_id = target;
   DELETE FROM planner_entry_mutations WHERE owner_id = target;
   DELETE FROM planner_entries WHERE owner_id = target;
   DELETE FROM account_settings WHERE owner_id = target;

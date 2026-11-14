@@ -14,12 +14,12 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..account_protocol import (
-    legacy_cutover_receipt, require_v2_activation_ready, require_v2_protocol,
+    require_v2_activation_ready, require_v2_protocol,
 )
 from ..database import database_session
 from ..models import (
-    AccountSettings, ActorCheckpoint, ChangeEvent, DocumentOperation, DocumentState, ObjectTombstone,
-    StudyShare, StudyShareGrant, SyncedNotebook, User, VerifiedAsset,
+    ActorCheckpoint, DocumentOperation, DocumentState, ObjectTombstone,
+    StudyShare, StudyShareGrant, User, VerifiedAsset,
 )
 from ..asset_store import asset_path, valid_verified_file
 from ..operation_ordering import precedence
@@ -168,7 +168,6 @@ def ensure_actor_binding(
 
 async def apply_one(
     session: AsyncSession, principal: Principal, op: OperationEnvelope,
-    *, converting_legacy: bool = False,
     initial_image_receipt: str | None = None,
 ) -> dict | None:
     """Apply when causal prerequisites exist, else return None for retry."""
@@ -293,21 +292,6 @@ async def apply_one(
         if op.logical_clock <= parent.logical_clock:
             raise HTTPException(status_code=422, detail="Invalid logical clock.")
 
-    # Prevent dual writers: stage-11 migration must explicitly convert v1
-    # notebook state before any operation edits that UID.
-    if not converting_legacy and op.document_id != LIBRARY_DOCUMENT_ID:
-        legacy = await session.scalar(
-            select(SyncedNotebook.id).where(
-                SyncedNotebook.owner_id == owner_id,
-                SyncedNotebook.uid == op.document_id,
-            )
-        )
-        if legacy is not None and await legacy_cutover_receipt(session, owner_id) is None:
-            raise HTTPException(
-                status_code=409,
-                detail="Legacy document requires stage-11 migration.",
-            )
-
     state = await session.get(DocumentState, (owner_id, op.document_id))
     tombstone_rows = await session.scalars(
         select(ObjectTombstone).where(
@@ -411,63 +395,9 @@ async def get_activation_readiness(
     principal = await authorize(session, authorization, None)
     if principal.kind != "owner":
         raise HTTPException(status_code=403, detail="Account owner required.")
-    receipt = await require_v2_activation_ready(session, principal.owner_id)
+    await require_v2_activation_ready(session, principal.owner_id)
     require_operations_v2_write(principal.owner_id)
-    response = {"protocol": "v2", "writeEnabled": True, "version": 1}
-    if receipt is not None:
-        response["legacyCutover"] = {
-            "legacyCursor": receipt["legacy_cursor"],
-            "operationCursor": receipt["operation_cursor"],
-        }
-    return response
-
-
-@router.get("/activation/legacy-source")
-async def get_legacy_source(
-    uid: str = Query(min_length=1, max_length=128),
-    revision: int = Query(ge=1, le=MAX_SAFE_INTEGER),
-    authorization: str | None = Header(default=None),
-    session: AsyncSession = Depends(database_session),
-) -> dict:
-    """Prove a device's v1 projection is covered before moving it aside."""
-    principal = await authorize(session, authorization, None)
-    require_operations_v2_write(principal.owner_id)
-    if await require_v2_activation_ready(session, principal.owner_id) is None:
-        raise HTTPException(status_code=404, detail="No historical cutover.")
-    record = await session.scalar(
-        select(SyncedNotebook).where(
-            SyncedNotebook.owner_id == principal.owner_id,
-            SyncedNotebook.uid == uid,
-        )
-    )
-    if record is None or record.revision < revision:
-        raise HTTPException(status_code=404, detail="Legacy revision not covered.")
-    if record.revision == revision:
-        return {"revision": revision, "notebook": record.content,
-                "deleted": record.deleted_at is not None}
-    event = await session.scalar(
-        select(ChangeEvent).where(
-            ChangeEvent.owner_id == principal.owner_id,
-            ChangeEvent.entity_uid == uid,
-            ChangeEvent.revision == revision,
-        ).order_by(ChangeEvent.id.desc()).limit(1)
-    )
-    if event is None or (event.content is None and not event.deleted):
-        raise HTTPException(status_code=404, detail="Legacy revision not covered.")
-    return {"revision": revision, "notebook": event.content, "deleted": event.deleted}
-
-
-@router.get("/activation/legacy-library")
-async def get_legacy_library(
-    authorization: str | None = Header(default=None),
-    session: AsyncSession = Depends(database_session),
-) -> dict:
-    principal = await authorize(session, authorization, None)
-    require_operations_v2_write(principal.owner_id)
-    if await require_v2_activation_ready(session, principal.owner_id) is None:
-        raise HTTPException(status_code=404, detail="No historical cutover.")
-    row = await session.get(AccountSettings, (principal.owner_id, "libraryState"))
-    return {"library": row.content if row is not None else None}
+    return {"protocol": "v2", "writeEnabled": True, "version": 1}
 
 
 @router.post("/operations/batch")

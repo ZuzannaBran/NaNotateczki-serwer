@@ -74,7 +74,7 @@ async def health() -> dict:
     return {"status": "ok", "service": "nanotateczki-api"}
 
 
-@app.get("/v1/time")
+@app.get("/v2/time")
 async def server_time() -> dict:
     # Unix UTC epoch milliseconds, independent of the server's timezone.
     # The client compares this against its monotonic request midpoint.

@@ -61,7 +61,7 @@ class Stage14RetirementAuditTest(unittest.TestCase):
     def test_clean_server_is_only_a_prerequisite(self):
         result = self.run_audit()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("NOT approved", result.stdout)
+        self.assertIn("retired snapshot tables are absent", result.stdout)
         self.assertIn("v2_accounts: 1", result.stdout)
 
     def test_every_legacy_or_inconsistent_count_blocks(self):

@@ -17,7 +17,7 @@ def test_health_exposes_no_data_and_disables_caching() -> None:
 def test_auth_request_is_rejected_before_large_body_is_parsed() -> None:
     with TestClient(app) as client:
         response = client.post(
-            "/v1/auth/login",
+            "/v2/auth/login",
             content=b"{}",
             headers={"Content-Length": str(1024 * 1024 + 1)},
         )
@@ -37,6 +37,13 @@ def test_operation_batch_limit_is_enforced_at_http_boundary() -> None:
 def test_legacy_writers_are_not_routed_even_without_account_protocol():
     retired = (
         ("GET", "/v1/sync/bootstrap"),
+        ("GET", "/v1/auth/protocol"),
+        ("POST", "/v1/auth/login"),
+        ("POST", "/v1/auth/register"),
+        ("GET", "/v1/time"),
+        ("POST", "/v1/reports/feedback"),
+        ("GET", "/v2/activation/legacy-source"),
+        ("GET", "/v2/activation/legacy-library"),
         ("PUT", "/v1/sync/notebooks/item"),
         ("DELETE", "/v1/sync/notebooks/item"),
         ("PUT", "/v1/planner/entries/item"),
@@ -56,7 +63,7 @@ def test_legacy_writers_are_not_routed_even_without_account_protocol():
 def test_password_change_requires_authentication() -> None:
     with TestClient(app) as client:
         response = client.post(
-            "/v1/auth/change-password",
+            "/v2/auth/change-password",
             json={
                 "currentPassword": "old long password",
                 "newPassword": "a different long password",

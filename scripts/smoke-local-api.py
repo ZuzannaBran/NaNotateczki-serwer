@@ -71,7 +71,7 @@ def main() -> None:
     backup_id = None
     try:
         status, registered = call(
-            "POST", "/v1/auth/register", {"username": username, "password": password}
+            "POST", "/v2/auth/register", {"username": username, "password": password}
         )
         if status != 201:
             raise AssertionError(f"register: HTTP {status}, {registered}")
@@ -79,7 +79,7 @@ def main() -> None:
         token = registered["accessToken"]
         refresh_token = registered["refreshToken"]
 
-        status, profile = call("GET", "/v1/auth/me", token=token)
+        status, profile = call("GET", "/v2/auth/me", token=token)
         expect(status, 200, "profile")
         assert profile["userId"] == user_id
 
@@ -172,17 +172,17 @@ def main() -> None:
 
         status, _ = call(
             "POST",
-            "/v1/auth/change-password",
+            "/v2/auth/change-password",
             {"currentPassword": password, "newPassword": new_password},
             token=token,
         )
         expect(status, 204, "change password")
-        expect(call("GET", "/v1/auth/me", token=token)[0], 401,
+        expect(call("GET", "/v2/auth/me", token=token)[0], 401,
                "old access token")
-        expect(call("POST", "/v1/auth/refresh",
+        expect(call("POST", "/v2/auth/refresh",
                     {"refreshToken": refresh_token})[0], 401,
                "old refresh token")
-        expect(call("POST", "/v1/auth/login",
+        expect(call("POST", "/v2/auth/login",
                     {"username": username, "password": new_password})[0], 200,
                "login with new password")
         print(

@@ -318,7 +318,7 @@ def test_persistent_protocol_fence_rejects_cross_writers(client):
         json={"operations": [operation]},
     )
     assert blocked.status_code == 409, blocked.text
-    assert "cutover" in str(blocked.json()).lower()
+    assert "does not support protocol v2" in blocked.json()["detail"]
 
     _, v2_token = identity()
     uid = "stage12-unrelated-" + uuid.uuid4().hex
@@ -429,54 +429,26 @@ def test_empty_account_activates_and_api_role_cannot_write_snapshot_history(clie
         f"/v1/sync/notebooks/{document}", headers=auth, json={},
     ).status_code == 404
 
-    async def assert_read_only():
+    async def assert_removed():
         engine = create_async_engine(os.environ["DATABASE_URL"])
         try:
             async with engine.connect() as connection:
-                for table in ("synced_notebooks", "change_events", "idempotency_records"):
-                    for permission in ("INSERT", "UPDATE", "DELETE"):
-                        assert not await connection.scalar(text(
-                            "SELECT has_table_privilege(current_user, :table, :permission)"
-                        ), {"table": table, "permission": permission})
-                assert await connection.scalar(text(
-                    "SELECT COUNT(*) FROM synced_notebooks WHERE owner_id = :owner"
-                ), {"owner": owner}) == 0
+                for table in ("synced_notebooks", "change_events", "idempotency_records", "legacy_account_cutovers"):
+                    assert await connection.scalar(text("SELECT to_regclass(:table)"), {"table": "public." + table}) is None
         finally:
             await engine.dispose()
+    asyncio.run(assert_removed())
 
-    asyncio.run(assert_read_only())
 
-
-def test_retirement_migration_activates_only_empty_historical_accounts(client):
+def test_retirement_keeps_v2_account_after_explicit_fixture_cleanup(client):
     empty = uuid.UUID("00000000-0000-4000-8000-000000000016")
     archived = uuid.UUID("00000000-0000-4000-8000-000000000017")
     empty_token, _ = create_access_token(empty, 1)
     archived_token, _ = create_access_token(archived, 1)
-
     assert client.get("/v2/activation/readiness", headers=headers(empty_token)).json() == {
         "protocol": "v2", "writeEnabled": True, "version": 1,
     }
-    assert client.get(
-        "/v2/activation/readiness", headers=headers(archived_token),
-    ).status_code == 409
-    assert client.get(
-        "/v1/auth/protocol", headers=headers(archived_token),
-    ).json() == {"protocol": "v1"}
-
-    async def read_archive():
-        engine = create_async_engine(os.environ["DATABASE_URL"])
-        try:
-            async with engine.connect() as connection:
-                row = await connection.execute(text("""
-                    SELECT revision, content, deleted_at
-                    FROM synced_notebooks WHERE owner_id = :owner AND uid = 'legacy-deletion'
-                """), {"owner": archived})
-                revision, content, deleted_at = row.one()
-                assert revision == 1 and content is None and deleted_at is not None
-        finally:
-            await engine.dispose()
-
-    asyncio.run(read_archive())
+    assert client.get("/v2/auth/protocol", headers=headers(archived_token)).status_code == 401
 
 
 def test_1000_inserts_1000_deletes_and_idempotent_retries(client):
@@ -731,7 +703,10 @@ def test_page_delete_wins_over_late_write_and_undo_redo_is_logged(client):
     )
     submit(client, token, [attempted], status=422)
     state = snapshot(client, token, document)["state"]
-    assert state["pages"] == {}
+    assert len(state["pages"]) == 1
+    replacement, = state["pages"]
+    assert replacement.startswith("empty-") and replacement != page
+    assert state["pages"][replacement]["objects"] == {}
     assert state is not None
     assert len(feed(client, token)) == 7
 
@@ -865,153 +840,6 @@ def test_stale_page_delete_after_move_removes_visible_object(client):
     assert all(
         object_id not in page["objects"] for page in state["pages"].values()
     )
-
-
-def test_historical_account_cutover_is_atomic_scoped_and_idempotent(client):
-    import base64
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    from app.legacy_cutover import migrate_account
-    from app.legacy_operation_plan import LegacyConversionError
-
-    owner, token = identity(v2=False)
-    _, other = identity()
-    auth = headers(token)
-    now = "2026-11-13T11:00:00Z"
-    uid = "cutover-" + owner.hex
-    dead = uid + "-deleted"
-    data = b"\x89PNG\r\n\x1a\nlegacy"
-    digest = hashlib.sha256(data).hexdigest()
-    formatted = {"id": "text-" + owner.hex, "text": "Ł😀",
-                 "deltaJson": json.dumps([
-                     {"insert": "Ł😀", "attributes": {"bold": True}},
-                     {"insert": "\n", "attributes": {"align": "center"}},
-                 ]), "fontSize": 18, "color": 0xff123456, "width": 140,
-                 "rotation": 0, "dx": 1, "dy": 2}
-    image = {"id": "img-" + owner.hex, "bytes": base64.b64encode(data).decode(),
-             "imageMime": "image/png", "width": 120, "height": 80, "dx": 1, "dy": 2}
-    ink = {"id": "old-ink", "tool": 0, "width": 2, "color": 0xff112233,
-           "points": [{"dx": 1, "dy": 2, "pressure": 0.5}]}
-
-    def seed_revision(doc, revision, pages, *, deleted=False):
-        notebook = None if deleted else json.dumps({
-            "uid": doc, "title": "History", "kind": 0, "folder": "Notes/Sub",
-            "createdAt": now, "updatedAt": now, "pages": pages,
-        })
-        sql("""
-            INSERT INTO synced_notebooks (id, owner_id, uid, content, revision, deleted_at)
-            VALUES (:row_id, :owner, :doc, CAST(:content AS jsonb), :revision,
-                    CASE WHEN :deleted THEN now() ELSE NULL END)
-            ON CONFLICT (owner_id, uid) DO UPDATE SET
-              content = excluded.content, revision = excluded.revision,
-              deleted_at = excluded.deleted_at
-        """, row_id=uuid.uuid4(), owner=owner, doc=doc, content=notebook,
-             revision=revision, deleted=deleted)
-        sql("""
-            INSERT INTO change_events (owner_id, entity_uid, revision, deleted, content)
-            VALUES (:owner, :doc, :revision, :deleted, CAST(:content AS jsonb))
-        """, owner=owner, doc=doc, revision=revision, deleted=deleted, content=notebook)
-
-    page = {"id": "page-" + owner.hex, "title": "Kept", "isBookmarked": True,
-            "textBlocks": [formatted], "imageBlocks": [image], "inkStrokes": []}
-    old_page = {**page, "id": "old-page", "textBlocks": [], "imageBlocks": [],
-                "inkStrokes": [ink]}
-    seed_revision(uid, 1, [page, old_page])
-    seed_revision(dead, 1, [page])
-    seed_revision(dead, 2, [], deleted=True)
-    library = {"folders": ["Notes/Sub"], "covers": {}, "plannerTasks": {
-        "planner-1": [{"id": "task-1", "title": "Complete", "completed": True}]
-    }, "recentCoverColors": []}
-    for category, value in (
-        ("libraryState", library),
-        ("backupPreferences", {"version": 1, "idleSeconds": 30}),
-    ):
-        sql("""
-            INSERT INTO account_settings (owner_id, category, revision, content)
-            VALUES (:owner, :category, 1, CAST(:content AS jsonb))
-        """, owner=owner, category=category, content=json.dumps(value))
-
-    async def migrate(**kwargs):
-        engine = create_async_engine(os.environ["NN_STAGE12_FIXTURE_DATABASE_URL"])
-        try:
-            async with async_sessionmaker(engine).begin() as session:
-                return await migrate_account(session, owner, **kwargs)
-        finally:
-            await engine.dispose()
-
-    broken = {**page, "imageBlocks": [{**image, "bytes": None}]}
-    seed_revision(uid, 2, [broken])
-    async def historical_cursor():
-        engine = create_async_engine(os.environ["NN_STAGE12_FIXTURE_DATABASE_URL"])
-        try:
-            async with engine.connect() as connection:
-                return await connection.scalar(text(
-                    "SELECT MAX(id) FROM change_events WHERE owner_id = :owner"
-                ), {"owner": owner})
-        finally:
-            await engine.dispose()
-
-    cursor = asyncio.run(historical_cursor())
-    with pytest.raises(LegacyConversionError, match="inline bytes"):
-        asyncio.run(migrate(apply=True, expected_cursor=cursor))
-    assert client.get("/v1/auth/protocol", headers=auth).json() == {"protocol": "v1"}
-    seed_revision(uid, 3, [page])
-    with pytest.raises(LegacyConversionError, match="cursor changed"):
-        asyncio.run(migrate(apply=True, expected_cursor=cursor))
-
-    report = asyncio.run(migrate())
-    assert report["status"] == "validated" and report["converted_documents"] == 2
-    assert client.get("/v2/activation/readiness", headers=auth).status_code == 409
-    activated = asyncio.run(migrate(apply=True, expected_cursor=report["legacy_cursor"]))
-    assert activated["operation_cursor"] > 0
-    assert asyncio.run(migrate(apply=True, expected_cursor=report["legacy_cursor"])) == {
-        **activated, "status": "already-activated",
-    }
-    ready = client.get("/v2/activation/readiness", headers=auth).json()
-    assert ready["legacyCutover"] == {
-        "legacyCursor": report["legacy_cursor"],
-        "operationCursor": activated["operation_cursor"],
-    }
-    assert client.get("/v1/sync/bootstrap", headers=auth).status_code == 404
-    assert client.put(f"/v1/sync/notebooks/{uid}", headers=auth,
-                      json={"notebook": {}}).status_code == 404
-    historical = {"uid": uid, "revision": 1}
-    archive = client.get("/v2/activation/legacy-source", params=historical, headers=auth)
-    assert archive.json()["notebook"]["pages"][1]["id"] == "old-page"
-    assert client.get(
-        "/v2/activation/legacy-source", params=historical, headers=headers(other),
-    ).status_code == 404
-    deleted_archive = client.get(
-        "/v2/activation/legacy-source",
-        params={"uid": dead, "revision": 2},
-        headers=auth,
-    )
-    assert deleted_archive.json() == {
-        "revision": 2, "notebook": None, "deleted": True,
-    }
-    assert client.get("/v2/activation/legacy-library", headers=auth).json() == {
-        "library": library,
-    }
-    settings = client.get("/v2/account-settings", headers=auth).json()["settings"]
-    assert settings["backupPreferences"]["value"]["idleSeconds"] == 30
-    assert "libraryState" not in settings
-    feed = client.get("/v2/operations?after=0", headers=auth).json()
-    assert feed["cursor"] == activated["operation_cursor"]
-    events = [item["operation"] for item in feed["operations"]]
-    assert {item["type"] for item in events} >= {
-        "document.create", "document.delete", "page.delete", "object.delete",
-        "text.insert", "asset.attach", "folder.create", "task.create",
-    }
-    text_op = next(item for item in events if item["type"] == "text.insert")
-    assert "".join(item["text"] for item in text_op["payload"]["atoms"]) == "Ł😀\n"
-    assert text_op["payload"]["atoms"][0]["attributes"] == {"bold": True}
-    restored = client.get(f"/v2/assets/{digest}", headers=auth)
-    assert restored.content == data
-    assert client.get(f"/v2/assets/{digest}", headers=headers(other)).status_code == 404
-    rename = Actor(uid, "after-cutover", clock=100).next(
-        "document.set", payload={"properties": {"title": "After migration"}},
-    )
-    assert client.post("/v2/operations/batch", headers=auth,
-                       json={"operations": [rename]}).status_code == 200
 
 
 def test_image_create_and_verified_attachment_commit_as_one_batch(client):

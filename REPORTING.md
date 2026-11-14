@@ -16,8 +16,8 @@ the JSON files or include them in public web builds. They may contain stack
 traces and local paths. The server backup script now archives the entire `data/` directory, including
 feedback and diagnostics, alongside device snapshots.
 
-`POST /v1/reports/feedback` accepts `{"system":"Linux","issue":"..."}`
-without sign-in, subject to a rate limit. `PUT /v1/reports/diagnostics`
+`POST /v2/reports/feedback` accepts `{"system":"Linux","issue":"..."}`
+without sign-in, subject to a rate limit. `PUT /v2/reports/diagnostics`
 requires a Bearer token and accepts `deviceId`, `system`, `errors`,
 `dataIntegrity` and `optimization`. Both reject unrecognized fields.
 Diagnostics uploads are limited to 32,000 characters per category.

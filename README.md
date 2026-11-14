@@ -1,6 +1,9 @@
 # NaNotateczki backend
 
-## Uruchomienie po pakiecie 11
+## Wdrożenie wyłącznie v2
+
+Stan serwera i wykonane kontrole:
+[wdrożenie z 13 listopada](docs/V2_DEPLOYED_2026_11_13_PL.md).
 
 `bash scripts/deploy-v2.sh` aktualizuje istniejący projekt Compose bez
 kasowania danych. Zatrzymuje API na czas migracji, uruchamia je i sprawdza
@@ -12,8 +15,8 @@ zachowuje wybrany tryb z konfiguracji Compose i nie rozszerza canary na
 wszystkie konta. Pierwszy test wymaga `OPERATIONS_V2_WRITE_MODE=canary`
 oraz UUID konta w `OPERATIONS_V2_CANARY_OWNER_IDS` w `.env`.
 `OPERATIONS_V2_WRITE_MODE=all` ustaw dopiero po akceptacji canary,
-backup/restore i testów dwóch klientów. Konto z zachowaną historią
-wymaga konwersji albo jawnego resetu **konta testowego**.
+backup/restore i testów dwóch klientów. Migracja 0017 usuwa puste tabele snapshotów. Odmawia działania, jeśli
+pozostały historyczne dane lub konta bez markera v2; nie kasuje kont.
 Po wdrożeniu użyj nowej wersji Flutter, bez flagi aktywacji.
 
 Bramka canary obejmuje również ustawienia konta, tworzenie/upload/finalizację
@@ -22,8 +25,8 @@ v2 nie omija listy aktywowanych kont. Odczyt danych i odwołanie Share
 pozostają możliwe przy wstrzymanym zapisie.
 
 Dokumenty, Share, backup, planer i ustawienia używają adresów `/v2`.
-Logowanie `/v1/auth`, diagnostyka i zegar pozostają odrębnym API.
-Adresy zapisu v1 opisane niżej mają wyłącznie znaczenie historyczne.
+Logowanie `/v2/auth`, diagnostyka i zegar pozostają odrębnym API.
+Adresy `/v1` oraz endpointy konwersji historycznych snapshotów zwracają 404.
 
 
 Źródłem prawdy dla backendu jest repozytorium
@@ -31,8 +34,8 @@ Adresy zapisu v1 opisane niżej mają wyłącznie znaczenie historyczne.
 Katalog `NaNotateczki/server/` w repo aplikacji jest zgodnościowym lustrem
 backendu dla istniejących testów; nie należy wdrażać z niego niezależnych zmian.
 Backend działa z `api/` w katalogu głównym serwera. API udostępnia konta z nazwą użytkownika jako loginem, hasła Argon2id, krótkie tokeny dostępu, rotowane tokeny
-odświeżania, synchronizację notatników z rewizjami i dziennikiem zmian, sygnały
-WebSocket oraz zweryfikowane snapshoty urządzeń.
+odświeżania, synchronizację notatników przez dziennik operacji, sygnały WebSocket
+oraz zweryfikowane archiwa operacyjne urządzeń (format 3).
 
 ## Uruchomienie
 
@@ -78,13 +81,10 @@ wariant włącza rejestrację tylko dla API dostępnego przez port loopback.
    `docker compose exec api python -m app.create_user example_user`.
    Polecenie poprosi o hasło. Publiczna rejestracja pozostaje wyłączona.
 
-Przed uruchomieniem nowej wersji API wykonaj wszystkie migracje, w tym
-`0002_auth_version.sql`, `0003_username.sql` i
-`0007_account_settings.sql`, `0008_planner_entries.sql`
-i `0009_account_settings_library_state.sql`. Migracje nadają istniejącym
+Przed uruchomieniem nowej wersji API wykonaj wszystkie migracje 0001–0017. Migracje nadają istniejącym
 kontom login z unikalnej części e-maila lub identyfikatora konta. Rejestracja i nowe hasło przy zmianie wymagają 8–128
 znaków; logowanie nadal akceptuje istniejące hasła 1–256 znaków. Endpoint
-`POST /v1/auth/change-password` wymaga tokenu Bearer oraz JSON z
+`POST /v2/auth/change-password` wymaga tokenu Bearer oraz JSON z
 `currentPassword` i `newPassword`. Sukces
 zwraca `204` bez treści i unieważnia wszystkie dotychczasowe tokeny konta oraz
 połączenia WebSocket. Stary token odświeżania nie unieważni sesji utworzonej
@@ -119,7 +119,7 @@ migracją wykonaj pełną kopię i test odtworzenia na osobnej instancji.
 
 ## Kontrola zegara klienta
 
-Publiczny `GET /v1/time` zwraca `serverTimeMs`, czyli uniksowy czas
+Publiczny `GET /v2/time` zwraca `serverTimeMs`, czyli uniksowy czas
 UTC w milisekundach z zegara serwera. API ustawia `Cache-Control: no-store`.
 Klient porównuje go przy starcie zalogowanej sesji z własnym czasem,
 uwzględniając RTT; rozbieżność większa niż minuta zgłaszana jest do Errors.
@@ -130,15 +130,15 @@ wykonaj `docker compose up -d --build api`; migracje SQL nie są potrzebne.
 
 ## Synchronizacja ustawień konta
 
-`GET /v1/account-settings` zwraca osobne rewizje ustawień aplikacji,
+`GET /v2/account-settings` zwraca osobne rewizje ustawień aplikacji,
 edytora, kolorów Recent i czasu bezczynności backupu.
-`PUT /v1/account-settings/{category}` wymaga tokenu Bearer,
+`PUT /v2/account-settings/{category}` wymaga tokenu Bearer,
 `expectedRevision` i `value`. Serwer zapisuje zmiany atomowo,
 a konflikt wersji zwraca 409 z bieżącym stanem bez nadpisywania danych.
 Po zapisie wysyłany jest sygnał WebSocket; klient okresowo uzgadnia
 trwały stan przez REST. Konto jest jedynym źródłem uprawnień do ustawień.
 
-Stare backupy v2 pozostają zgodne. Nowe snapshoty mogą dodatkowo zawierać
+Backup konta wymaga formatu 3 (`operations-v2`). Może zawierać
 `appPreferences`, `editorPreferences`, `recentColors` i
 `backupPreferences`; ich format jest weryfikowany przy finalize.
 Nie zmieniaj zastosowanych wcześniej migracji. Przed aktualizacją API
@@ -162,33 +162,15 @@ Testy równoległości, odzyskiwania backupu oraz publicznego HTTPS/WSS przez
 Cloudflare nadal wymagają odrębnej weryfikacji. Matryca i instrukcje:
 `TESTING.md`.
 
-## Wymagany marker protokołu konta (migracja 0013)
+## Gotowość konta
 
-Nowy backend po migracji 0013 używa trwałego `account_sync_protocol`.
-Konto bez wiersza działa wyłącznie na starym zapisie v1; sam
-`OPERATIONS_V2_WRITE_MODE=canary` **nie wystarcza** do włączenia v2.
-Pusty, nowy właściciel testowy może zostać aktywowany jedynie podczas
-wyłączenia API przez `scripts/stage13-activate-empty-canary.sh`.
-Dla istniejącego konta dostępny jest administracyjny dry-run
-`python -m app.legacy_cutover UUID` z katalogu `api/` po zastosowaniu
-migracji 0015. Apply wymaga uprawnień do markera protokołu, zgodnego
-`--expect-v1-cursor`, jawnej allowlisty v2 i
-`--all-v1-devices-flushed`. Najpierw użyj odizolowanej kopii bazy i
-assetów. Zmiany v1 i stary backup nie są usuwane. Nie zastępuj tej
-procedury resetem produkcyjnego konta.
-
-## Etap 13 — wdrożenie produkcyjne (jeszcze zablokowane)
-
-Procedura, bezpieczna flaga canary, test odtworzenia PostgreSQL+assetów
-oraz monitoring: [docs/STAGE13_PRODUCTION_ROLLOUT_PL.md](docs/STAGE13_PRODUCTION_ROLLOUT_PL.md).
-Domyślnie `OPERATIONS_V2_WRITE_MODE=disabled`; nie przełączać istniejących
-kont przed akceptacją E2E na kopii z rzeczywistą historią oraz
-testem odtworzenia kopii bazy i assetów.
-Lokalna walidacja archiwum bez Dockera:
-
-```bash
-python3 -m unittest discover -s scripts/tests -p 'test_stage13_backup_check.py'
-```
+Nowe konta otrzymują marker `v2` w tej samej transakcji co rejestracja.
+`GET /v2/auth/protocol` wymaga zalogowania. Przed startem klient sprawdza
+`GET /v2/activation/readiness`: marker konta i włączony zapis.
+Brak markera oznacza nieobsługiwane konto; nie uruchamia writera v1.
+`OPERATIONS_V2_WRITE_MODE` zachowuje tryby `disabled`, `canary` i `all`.
+Dla tej pustej instalacji docelowy zapis to `all` w lokalnym `.env`;
+skrypt wdrożenia nie zmienia konfiguracji innych instalacji.
 
 ## Etap 12 — testy prawdziwego PostgreSQL i WebSocket (bez produkcji)
 
@@ -203,7 +185,7 @@ NN_STAGE12_FLUTTER_ROOT=../NaNotateczki bash scripts/run-stage12-real.sh
 ```
 
 Runner uruchamia osobny, nietrwały PostgreSQL 17 na dynamicznym porcie
-localhost, stosuje migracje 0001–0012, następnie wykonuje prawdziwe
+localhost, stosuje wszystkie migracje 0001–0017, następnie wykonuje prawdziwe
 zapytania FastAPI i połączenia WebSocket. Nie podmienia bazy ani hubu
 mockami. Po zakończeniu usuwa testowy kontener i jego dane. Dodatkowa
 blokada w pytest odrzuca niejawny start i nieznane adresy bazy.
@@ -234,83 +216,34 @@ w `server/SECURITY_DEPLOY.md`.
 
 ## Wspólna edycja na Web
 
-Przed wdrożeniem API zastosuj **obie** migracje:
-`0004_study_shares.sql`, `0005_study_share_edit_clock.sql` i
-`0006_change_events_document_revision.sql`.
-Nie modyfikuj migracji już zastosowanych. Użyj:
-`scripts/apply-migrations.sh` przed `docker compose up -d --build api caddy`.
+Właściciel tworzy Share przez `/v2/study-shares`. Gość otwiera
+`/share/<UUID>` i podaje hasło. Dokument jest edytowany przez operacje v2;
+nie ma endpointu zastępującego całą notatkę. Uprawnienie gościa jest
+ograniczone do oryginalnego dokumentu. Wygaśnięcie lub odwołanie sesji
+odbiera dostęp (HTTP 410). WebSocket dostarcza powiadomienia i podgląd,
+a trwały dziennik REST umożliwia ponowienie oraz odtworzenie po restarcie.
 
-Właściciel musi mieć konto i włączony Web sync. Gość dołącza wyłącznie
-linkiem `/share/<UUID>` i hasłem 1–128 znaków. Otrzymuje prawdziwy edytor,
-ale uprawnienie zapisu ograniczone do jednego oryginalnego UID. Po
-zakończeniu albo wygaśnięciu (4 godziny) otrzyma HTTP 410.
-Przedłużenie w ostatnich 15 minutach dodaje 4 godziny bez nowego linku.
+Cloudflare Tunnel kieruje API do `http://caddy:8080`. Wyłącz cache dla
+uwierzytelnionego API i włącz WebSocket. Frontend wymaga nowego builda
+z `--dart-define=BACKEND_URL=https://api.nanotateczki.pl`.
 
-Goście i właściciel wysyłają zmiany do `synced_notebooks` przez REST.
-Baza przesyłana przez klienta musi odpowiadać zapisanej wersji historycznej;
-serwer odrzuca spreparowane snapshoty i zapobiega równoległym sesjom
-tego samego dokumentu. Usunięcie oryginału unieważnia aktywną sesję.
-Zmiany trafiają do `synced_notebooks` przez REST,
-a WebSocket sygnalizuje rewizje niemal natychmiast. Serwer łączy niezależne
-obiekty; dla zmian tego samego obiektu stosuje kolejność przyjęcia z
-dokładnością do mikrosekund, a w remisie rozmiar modyfikacji. Metadane
-konfliktu pozostają w `study_shares.edit_clock`. Właściciel odzyskuje
-aktywną sesję po odświeżeniu. Gość po odświeżeniu ponownie wpisuje hasło.
-Stary endpoint PNG pozostaje tylko dla zgodności wstecznej.
+## Planer, foldery i zadania
 
-Cloudflare Tunnel powinien kierować
-`app.nanotateczki.pl` i `api.nanotateczki.pl` do
-`http://caddy:8080`. Włącz WebSocket i wyłącz cache dla
-`/v1/study-shares/*`. Zbuduj Flutter Web z
-`--dart-define=BACKEND_URL=https://api.nanotateczki.pl`.
-Nie wystawiaj portów PostgreSQL ani API na routerze. Test E2E
-w dwóch prawdziwych przeglądarkach jest wymagany przed produkcją:
-rysowanie jednoczesne, edycja tego samego pola, restart hosta,
-przedłużenie, wygaśnięcie i odcięcie gościa.
+`GET /v2/planner/entries?after=<uid>` pobiera strony po 200 wpisów.
+`PUT /v2/planner/entries/<uid>` wymaga `expectedRevision` i identyfikatora
+mutacji. CAS rozstrzyga konkurencyjne zapisy bez polegania na zegarze
+urządzenia; usunięcia mają trwałe tombstones. Foldery i zadania biblioteki
+używają operacji `folder.*` i `task.*`, bez ustawienia `libraryState`.
 
-
-## Synchronizacja kalendarza (migracja 0008)
-
-Wykonaj `scripts/apply-migrations.sh` przed restartem API. Endpoints
-`GET /v1/planner/entries?after=<uid>` (strony po 200) i
-`PUT /v1/planner/entries/<uid>` wymagają tokenu właściciela.
-Zapis jest atomowy, obejmuje osobne wydarzenia i Study Sessions oraz
-trwałe tombstones po usunięciu. Potwierdzone usunięcie wygrywa z
-niezsynchronizowaną edycją innego urządzenia, także gdy jego zegar jest
-ustawiony w przyszłość. Usuniętego ID nie można przywrócić przez PUT,
-nawet używając historycznej flagi `restoreDeleted` w synchronizacji notatek.
-Dla dwóch aktywnych edycji jednego wpisu `modifiedAt` nadal pochodzi
-z zegara UTC klienta; poprawna kolejność wymaga zsynchronizowanych zegarów
-lub przyszłego CAS per wpis. UTC usuwa różnice stref, ale nie offset zegara.
-Po commicie publikuje `planner_changed` przez WebSocket.
-Backup `verifiedAt` oznacza wyłącznie weryfikację archiwum: nie wolno
-używać go do rozstrzygania kolejności edycji ani do przywracania tombstones.
-Po utracie połączenia klient pobiera pełny stan serwera i uzgadnia go
-z trwałymi lokalnymi zmianami offline.
-
-
-## Etap 14 — opcjonalny reset historycznego konta testowego
-
-Jeśli wszystkie dane konkretnego konta są przeznaczone do usunięcia,
-użyj po backupie i zatrzymaniu API zabezpieczonego skryptu
-`scripts/stage14-reset-test-account-v2.sh` z UUID, nazwą i jawnym
-potwierdzeniem `WIPE-UUID`. Podczas jednej transakcji czyści stan v1,
-sesje i kolejki tego konta oraz wstawia marker v2. Nie usuwa innych kont.
-Po migracji 0016 stare endpointy zapisu nie działają. Puste konta
-uzyskują marker automatycznie i nie wymagają resetu. Szczegóły:
-[docs/STAGE14_TEST_RESET_PL.md](docs/STAGE14_TEST_RESET_PL.md).
-
-## Etap 14 — audyt zachowanych danych historycznych
-
-Po wdrożeniu migracji 0013 można wykonać odczytowy audyt:
+## Kontrola po wdrożeniu
 
 ```bash
+bash scripts/stage13-status.sh
 bash scripts/stage14-retirement-audit.sh
-python3 -m unittest discover -s scripts/tests -p 'test_stage14_retirement_audit.py'
 ```
 
-Audyt raportuje liczbę kont i dokumentów v1, aktywnych sesji Share v1,
-podwójnych UID oraz niepoprawnych checkpointów. Działa w transakcji
-PostgreSQL READ ONLY, niczego nie przełącza i przy blokadzie zwraca kod 75.
-Wynik opisuje zachowane dane, nie dostępność starego protokołu zapisu.
-Nie usuwaj archiwalnych tabel, jeżeli konto wymaga konwersji.
+Odczytowy audyt sprawdza markery kont, brak tabel snapshotów i zgodność
+checkpointów z dziennikiem. Przy niespójności zwraca kod 75.
+Migracje historyczne 0001–0016 pozostają w repozytorium, ponieważ są
+niezbędne do odtworzenia schematu i weryfikacji już zapisanych checksum.
+Nie wolno zmieniać migracji zastosowanych wcześniej.
