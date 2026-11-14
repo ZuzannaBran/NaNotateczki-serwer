@@ -34,6 +34,20 @@ def test_operation_batch_limit_is_enforced_at_http_boundary() -> None:
     assert response.status_code == 413
 
 
+def test_system_routes_use_v2_without_retired_v1_aliases() -> None:
+    with TestClient(app) as client:
+        for route in ("register", "login", "refresh"):
+            # Invalid bodies test routing without creating accounts or sessions.
+            assert client.post(f"/v2/auth/{route}", json={}).status_code == 422
+            assert client.post(f"/v1/auth/{route}", json={}).status_code == 404
+        assert client.get("/v2/auth/protocol").status_code == 401
+        assert client.get("/v1/auth/protocol").status_code == 404
+        assert client.get("/v2/time").status_code == 200
+        assert client.get("/v1/time").status_code == 404
+        assert client.put("/v2/reports/diagnostics", json={}).status_code == 401
+        assert client.put("/v1/reports/diagnostics", json={}).status_code == 404
+
+
 def test_legacy_writers_are_not_routed_even_without_account_protocol():
     retired = (
         ("GET", "/v1/sync/bootstrap"),
