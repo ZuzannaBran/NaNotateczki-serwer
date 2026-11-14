@@ -23,6 +23,7 @@ from ..realtime_hub import hub
 from ..security import current_user, hash_password, token_digest, verify_password
 from ..owner_lock import lock_owner_events
 from ..settings import get_settings
+from ..browser_origins import browser_origin_allowed
 
 
 router = APIRouter(tags=["study-shares"])
@@ -292,7 +293,7 @@ async def end_share(
 async def watch_share(websocket: WebSocket, share_id: uuid.UUID) -> None:
     origin = websocket.headers.get("origin")
     # Browsers send Origin; native clients may omit it but still need a ticket.
-    if origin is not None and origin != str(get_settings().app_origin).rstrip("/"):
+    if origin is not None and not browser_origin_allowed(origin, get_settings()):
         await websocket.close(code=4403)
         return
     await websocket.accept()

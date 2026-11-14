@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_origin: HttpUrl = Field(alias="APP_ORIGIN")
     jwt_secret: str = Field(alias="JWT_SECRET", min_length=64)
     allow_registration: bool = Field(default=False, alias="ALLOW_REGISTRATION")
+    allow_localhost_origins: bool = Field(default=False, alias="ALLOW_LOCALHOST_ORIGINS")
     data_path: Path = Field(default=Path("/data"), alias="DATA_PATH")
     access_token_minutes: int = 10
     # Remember this installation across long breaks; explicit sign-out,

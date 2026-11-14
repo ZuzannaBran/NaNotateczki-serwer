@@ -10,6 +10,7 @@ from ..database import session_factory
 from ..models import StudyShare
 from ..realtime_hub import hub
 from ..settings import get_settings
+from ..browser_origins import browser_origin_allowed
 from .operations import authorize
 from .study_shares import ensure_active
 
@@ -121,7 +122,7 @@ async def receive_share_previews(
 @router.websocket("/v2/realtime")
 async def watch_operations(websocket: WebSocket) -> None:
     origin = websocket.headers.get("origin")
-    if origin is not None and origin != str(get_settings().app_origin).rstrip("/"):
+    if origin is not None and not browser_origin_allowed(origin, get_settings()):
         await websocket.close(code=4403)
         return
     await websocket.accept()

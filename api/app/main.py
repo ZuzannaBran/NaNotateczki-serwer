@@ -13,6 +13,7 @@ from .routers import (
     planner_v2, reports, study_shares,
 )
 from .settings import get_settings
+from .browser_origins import localhost_origin_regex
 
 
 settings = get_settings()
@@ -26,6 +27,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[str(settings.app_origin).rstrip("/")],
+    allow_origin_regex=localhost_origin_regex(settings),
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=[

@@ -162,3 +162,12 @@ Guest `GET /document` returns this state, and an `appearance_changed` WebSocket
 event requests a refresh without changing document revisions or creating a
 new notebook. The validated appearance is stored in the existing
 `study_shares.edit_clock` JSON under `_appearance`; no SQL migration is needed.
+
+## Chrome / Flutter Web na localhost
+
+Jeżeli lokalny klient ma korzystać z tego API, ustaw w .env
+`ALLOW_LOCALHOST_ORIGINS=true` i odtwórz kontener API. Domyślnie opcja
+jest wyłączona. Dopuszcza wyłącznie originy HTTP localhost, 127.0.0.1
+i [::1], także z portem; domena publiczna z APP_ORIGIN nadal działa.
+Ta sama reguła obejmuje CORS HTTP oraz Origin WebSocketów konta i Share.
+Nie zmienia uwierzytelniania ani uprawnień i nie przywraca tras v1.
